@@ -168,6 +168,50 @@ func filterAPIKeyStubKeys(userID int64, keys []APIKey, filters APIKeyListFilters
 	return result
 }
 
+// ListAll 管理员全局视图的测试桩：管理员路径未在此文件启用时不应被调用。
+func (s *apiKeyRepoStub) ListAll(ctx context.Context, params pagination.PaginationParams, filters APIKeyListFilters) ([]APIKey, *pagination.PaginationResult, error) {
+	panic("unexpected ListAll call")
+}
+
+// listAllApiKeyRepoStub 专用于管理员 List/UpdateAsAdmin/DeleteAsAdmin 路径的测试桩。
+// 它在 apiKeyRepoStub 基础上支持 ListAll，便于验证「管理员能看到/操作全系统所有用户的 Key」。
+type listAllApiKeyRepoStub struct {
+	apiKeyRepoStub
+	allKeys     []APIKey
+	listAllErr  error
+	listAllArg  *APIKeyListFilters // 记录最近一次传入的 filters（用于断言 UserID 过滤）
+	updateCalls []int64            // 记录被 Update 的 Key ID
+}
+
+func (s *listAllApiKeyRepoStub) ListAll(_ context.Context, params pagination.PaginationParams, filters APIKeyListFilters) ([]APIKey, *pagination.PaginationResult, error) {
+	if s.listAllErr != nil {
+		return nil, nil, s.listAllErr
+	}
+	f := filters
+	s.listAllArg = &f
+	var keys []APIKey
+	if filters.UserID != nil {
+		for i := range s.allKeys {
+			if s.allKeys[i].UserID == *filters.UserID {
+				keys = append(keys, s.allKeys[i])
+			}
+		}
+	} else {
+		keys = append([]APIKey(nil), s.allKeys...)
+	}
+	return keys, &pagination.PaginationResult{
+		Total:    int64(len(keys)),
+		Page:     params.Page,
+		PageSize: params.PageSize,
+		Pages:    1,
+	}, nil
+}
+
+func (s *listAllApiKeyRepoStub) Update(ctx context.Context, key *APIKey) error {
+	s.updateCalls = append(s.updateCalls, key.ID)
+	return nil
+}
+
 func (s *apiKeyRepoStub) VerifyOwnership(ctx context.Context, userID int64, apiKeyIDs []int64) ([]int64, error) {
 	panic("unexpected VerifyOwnership call")
 }
@@ -498,4 +542,116 @@ func TestApiKeyService_Delete_DeleteFails(t *testing.T) {
 	require.Equal(t, []int64{3}, repo.deletedIDs) // 验证 DeleteWithAudit 被调用
 	require.Empty(t, cache.invalidated)           // 验证删除失败时缓存未被清除（新顺序：先删后清）
 	require.Empty(t, cache.deleteAuthKeys)        // 验证删除失败时 auth 缓存未被清除
+}
+
+// ---- 管理员全局 API Key 管理路径测试 ----
+
+// TestApiKeyService_List_AdminMode_ReturnsAllKeys 验证：管理员模式下 List 走 ListAll，
+// 返回全系统所有用户的 Key（不按调用者 userID 过滤）。
+func TestApiKeyService_List_AdminMode_ReturnsAllKeys(t *testing.T) {
+	repo := &listAllApiKeyRepoStub{
+		allKeys: []APIKey{
+			{ID: 1, UserID: 10, Key: "k1"},
+			{ID: 2, UserID: 20, Key: "k2"},
+		},
+	}
+	svc := &APIKeyService{apiKeyRepo: repo}
+
+	// 调用者是 userID=999 的管理员，但应看到 userID=10/20 的 Key
+	keys, result, err := svc.List(context.Background(), 999, pagination.PaginationParams{Page: 1, PageSize: 10}, APIKeyListFilters{AdminMode: true})
+	require.NoError(t, err)
+	require.Len(t, keys, 2)
+	require.Equal(t, int64(2), result.Total)
+	// AdminMode 且未传 UserID → 不应过滤
+	require.NotNil(t, repo.listAllArg)
+	require.Nil(t, repo.listAllArg.UserID)
+}
+
+// TestApiKeyService_List_AdminMode_UserIDFilter 验证：管理员显式按 user_id 筛选时仅返回该用户的 Key。
+func TestApiKeyService_List_AdminMode_UserIDFilter(t *testing.T) {
+	repo := &listAllApiKeyRepoStub{
+		allKeys: []APIKey{
+			{ID: 1, UserID: 10, Key: "k1"},
+			{ID: 2, UserID: 20, Key: "k2"},
+		},
+	}
+	svc := &APIKeyService{apiKeyRepo: repo}
+
+	uid := int64(20)
+	keys, result, err := svc.List(context.Background(), 999, pagination.PaginationParams{Page: 1, PageSize: 10}, APIKeyListFilters{AdminMode: true, UserID: &uid})
+	require.NoError(t, err)
+	require.Len(t, keys, 1)
+	require.Equal(t, int64(20), keys[0].UserID)
+	require.Equal(t, int64(1), result.Total)
+}
+
+// TestApiKeyService_List_NonAdmin_StillScopedByUserID 验证：普通用户（AdminMode=false）仍走 ListByUserID，
+// 只能看到自己的 Key，即便 user_id 参数被构造也只能由后端按自身 userID 过滤（此处验证走 ListByUserID 分支）。
+func TestApiKeyService_List_NonAdmin_StillScopedByUserID(t *testing.T) {
+	repo := &listAllApiKeyRepoStub{
+		apiKeyRepoStub: apiKeyRepoStub{
+			allowListByUserID: true,
+			listByUserIDKeys:  []APIKey{{ID: 5, UserID: 7, Key: "k5"}},
+		},
+	}
+	svc := &APIKeyService{apiKeyRepo: repo}
+
+	// 普通用户 userID=7
+	keys, _, err := svc.List(context.Background(), 7, pagination.PaginationParams{Page: 1, PageSize: 10}, APIKeyListFilters{})
+	require.NoError(t, err)
+	require.Len(t, keys, 1)
+	require.Equal(t, int64(7), keys[0].UserID)
+	// 普通用户不应触发 ListAll
+	require.Nil(t, repo.listAllArg)
+	// ListByUserID 应以调用者 userID=7 过滤
+	require.Equal(t, []int64{7}, repo.listByUserIDCalls)
+}
+
+// TestApiKeyService_DeleteAsAdmin_BypassesOwnership 验证：管理员可删除他人的 Key（跳过所有权校验）。
+func TestApiKeyService_DeleteAsAdmin_BypassesOwnership(t *testing.T) {
+	repo := &apiKeyRepoStub{
+		apiKey: &APIKey{ID: 50, UserID: 10, Key: "k50"},
+	}
+	cache := &apiKeyCacheStub{}
+	svc := &APIKeyService{apiKeyRepo: repo, cache: cache}
+	svc.lastUsedTouchL1.Store(int64(50), time.Now())
+
+	// 管理员 userID=999 ≠ owner 10，但仍应删除成功
+	err := svc.DeleteAsAdmin(context.Background(), 50, 999)
+	require.NoError(t, err)
+	require.Equal(t, []int64{50}, repo.deletedIDs)
+	// 缓存应按 ownerID（10）清理，而非调用者
+	require.Equal(t, []int64{10}, cache.invalidated)
+}
+
+// TestApiKeyService_Delete_NonAdmin_BlockedOnForeignKey 验证：普通用户删除他人 Key 仍被拒绝。
+func TestApiKeyService_Delete_NonAdmin_BlockedOnForeignKey(t *testing.T) {
+	repo := &apiKeyRepoStub{
+		apiKey: &APIKey{ID: 50, UserID: 10, Key: "k50"},
+	}
+	cache := &apiKeyCacheStub{}
+	svc := &APIKeyService{apiKeyRepo: repo, cache: cache}
+
+	err := svc.Delete(context.Background(), 50, 999) // 普通用户 999 ≠ owner 10
+	require.ErrorIs(t, err, ErrInsufficientPerms)
+	require.Empty(t, repo.deletedIDs)
+	require.Empty(t, cache.invalidated)
+}
+
+// TestApiKeyService_UpdateAsAdmin_BypassesOwnership 验证：管理员可编辑他人 Key（跳过所有权校验）。
+func TestApiKeyService_UpdateAsAdmin_BypassesOwnership(t *testing.T) {
+	newName := "renamed-by-admin"
+	repo := &listAllApiKeyRepoStub{
+		apiKeyRepoStub: apiKeyRepoStub{
+			apiKey: &APIKey{ID: 70, UserID: 10, Key: "k70", Status: "active"},
+		},
+	}
+	cache := &apiKeyCacheStub{}
+	svc := &APIKeyService{apiKeyRepo: repo, cache: cache}
+
+	// 管理员 userID=999 ≠ owner 10，重命名应成功
+	key, err := svc.UpdateAsAdmin(context.Background(), 70, 999, UpdateAPIKeyRequest{Name: &newName})
+	require.NoError(t, err)
+	require.Equal(t, "renamed-by-admin", key.Name)
+	require.Equal(t, []int64{70}, repo.updateCalls)
 }

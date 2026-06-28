@@ -6,7 +6,7 @@
           <div class="flex flex-wrap items-center gap-3">
             <SearchInput
               v-model="filterSearch"
-              :placeholder="t('keys.searchPlaceholder')"
+              :placeholder="isAdmin ? t('keys.searchPlaceholderAdmin') : t('keys.searchPlaceholder')"
               class="w-full sm:w-64"
               @search="onFilterChange"
             />
@@ -113,6 +113,19 @@
                 />
                 <Icon v-else name="clipboard" size="sm" />
               </button>
+            </div>
+          </template>
+
+          <template #cell-owner="{ row }">
+            <div class="flex flex-col">
+              <span class="font-medium text-gray-900 dark:text-white">
+                {{ row.user?.username || '—' }}
+              </span>
+              <span class="text-xs text-gray-500 dark:text-gray-400">{{ row.user?.email || '' }}</span>
+              <span class="text-xs text-gray-400 dark:text-dark-500">
+                ID: {{ row.user_id }}
+                <span v-if="row.user?.role" class="ml-1">· {{ row.user.role }}</span>
+              </span>
             </div>
           </template>
 
@@ -1113,30 +1126,31 @@
 </template>
 
 <script setup lang="ts">
-	import { ref, reactive, computed, onMounted, onUnmounted, type ComponentPublicInstance } from 'vue'
-	import { useI18n } from 'vue-i18n'
-	import { useAppStore } from '@/stores/app'
-	import { useOnboardingStore } from '@/stores/onboarding'
-	import { useClipboard } from '@/composables/useClipboard'
+import { ref, reactive, computed, onMounted, onUnmounted, type ComponentPublicInstance } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { useAppStore } from '@/stores/app'
+import { useAuthStore } from '@/stores/auth'
+import { useOnboardingStore } from '@/stores/onboarding'
+import { useClipboard } from '@/composables/useClipboard'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 
 const { t } = useI18n()
-import { keysAPI, authAPI, usageAPI, userGroupsAPI } from '@/api'
+import { keysAPI, authAPI, usageAPI, userGroupsAPI, adminAPI } from '@/api'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
-	import DataTable from '@/components/common/DataTable.vue'
-	import Pagination from '@/components/common/Pagination.vue'
-	import BaseDialog from '@/components/common/BaseDialog.vue'
-	import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
-	import EmptyState from '@/components/common/EmptyState.vue'
-	import Select from '@/components/common/Select.vue'
-	import SearchInput from '@/components/common/SearchInput.vue'
-	import Icon from '@/components/icons/Icon.vue'
-	import UseKeyModal from '@/components/keys/UseKeyModal.vue'
-	import EndpointPopover from '@/components/keys/EndpointPopover.vue'
-	import GroupBadge from '@/components/common/GroupBadge.vue'
-	import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
-	import type { ApiKey, Group, PublicSettings, SubscriptionType, GroupPlatform, UpdateApiKeyRequest } from '@/types'
+import DataTable from '@/components/common/DataTable.vue'
+import Pagination from '@/components/common/Pagination.vue'
+import BaseDialog from '@/components/common/BaseDialog.vue'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
+import Select from '@/components/common/Select.vue'
+import SearchInput from '@/components/common/SearchInput.vue'
+import Icon from '@/components/icons/Icon.vue'
+import UseKeyModal from '@/components/keys/UseKeyModal.vue'
+import EndpointPopover from '@/components/keys/EndpointPopover.vue'
+import GroupBadge from '@/components/common/GroupBadge.vue'
+import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
+import type { ApiKey, Group, PublicSettings, SubscriptionType, GroupPlatform, UpdateApiKeyRequest } from '@/types'
 import type { Column } from '@/components/common/types'
 import type { BatchApiKeyUsageStats } from '@/api/usage'
 import { formatDateTime } from '@/utils/format'
@@ -1168,23 +1182,32 @@ interface GroupOption {
 }
 
 const appStore = useAppStore()
+const authStore = useAuthStore()
 const onboardingStore = useOnboardingStore()
 const { copyToClipboard: clipboardCopy } = useClipboard()
 
-const allColumns = computed<Column[]>(() => [
-  { key: 'name', label: t('common.name'), sortable: true },
-  { key: 'key', label: t('keys.apiKey'), sortable: false },
-  { key: 'group', label: t('keys.group'), sortable: false },
-  { key: 'current_concurrency', label: t('keys.currentConcurrency'), sortable: true },
-  { key: 'usage', label: t('keys.usage'), sortable: false },
-  { key: 'rate_limit', label: t('keys.rateLimitColumn'), sortable: false },
-  { key: 'expires_at', label: t('keys.expiresAt'), sortable: true },
-  { key: 'status', label: t('common.status'), sortable: true },
-  { key: 'last_used_at', label: t('keys.lastUsedAt'), sortable: true },
-  { key: 'last_used_ip', label: t('keys.lastUsedIP'), sortable: false },
-  { key: 'created_at', label: t('keys.created'), sortable: true },
-  { key: 'actions', label: t('common.actions'), sortable: false }
-])
+const isAdmin = computed(() => authStore.isAdmin)
+
+const allColumns = computed<Column[]>(() => {
+  const cols: Column[] = [
+    { key: 'name', label: t('common.name'), sortable: true },
+    { key: 'key', label: t('keys.apiKey'), sortable: false },
+    { key: 'group', label: t('keys.group'), sortable: false },
+    { key: 'current_concurrency', label: t('keys.currentConcurrency'), sortable: true },
+    { key: 'usage', label: t('keys.usage'), sortable: false },
+    { key: 'rate_limit', label: t('keys.rateLimitColumn'), sortable: false },
+    { key: 'expires_at', label: t('keys.expiresAt'), sortable: true },
+    { key: 'status', label: t('common.status'), sortable: true },
+    { key: 'last_used_at', label: t('keys.lastUsedAt'), sortable: true },
+    { key: 'last_used_ip', label: t('keys.lastUsedIP'), sortable: false },
+    { key: 'created_at', label: t('keys.created'), sortable: true },
+    { key: 'actions', label: t('common.actions'), sortable: false }
+  ]
+  if (isAdmin.value) {
+    cols.unshift({ key: 'owner', label: t('keys.ownerColumn'), sortable: false })
+  }
+  return cols
+})
 
 const ALWAYS_VISIBLE_COLUMNS = new Set(['name', 'actions'])
 const DEFAULT_HIDDEN_COLUMNS = ['rate_limit', 'last_used_at', 'last_used_ip']
@@ -1501,7 +1524,9 @@ const loadApiKeys = async () => {
 
 const loadGroups = async () => {
   try {
-    groups.value = await userGroupsAPI.getAvailable()
+    groups.value = isAdmin.value
+      ? await adminAPI.groups.getAllIncludingInactive()
+      : await userGroupsAPI.getAvailable()
   } catch (error) {
     console.error('Failed to load groups:', error)
   }

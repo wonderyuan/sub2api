@@ -68,7 +68,10 @@ export default {
   keys: {
     title: 'API Keys',
     description: 'Manage your API keys and access tokens',
+    descriptionAdmin: 'Manage all API keys and access tokens across the system',
     searchPlaceholder: 'Search name or key...',
+    searchPlaceholderAdmin: 'Search name, key, user, email or user ID...',
+    ownerColumn: 'Owner',
     endpoints: {
       title: 'API Endpoints',
       default: 'Default',

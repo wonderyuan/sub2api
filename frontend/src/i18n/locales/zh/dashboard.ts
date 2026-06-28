@@ -68,7 +68,10 @@ export default {
   keys: {
     title: 'API 密钥',
     description: '管理您的 API 密钥和访问令牌',
+    descriptionAdmin: '管理全系统 API 密钥和访问令牌',
     searchPlaceholder: '搜索名称或Key...',
+    searchPlaceholderAdmin: '搜索名称、Key、用户名、邮箱或用户ID...',
+    ownerColumn: '所属用户',
     endpoints: {
       title: 'API 端点',
       default: '默认',
