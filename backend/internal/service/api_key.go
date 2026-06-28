@@ -140,4 +140,11 @@ type APIKeyListFilters struct {
 	Search  string
 	Status  string
 	GroupID *int64 // nil=不筛选, 0=无分组, >0=指定分组
+
+	// UserID 仅在管理员全局模式下生效：nil=列出全系统所有用户的 Key,
+	// 非 nil=仅列出该用户的 Key。普通用户模式忽略此字段。
+	UserID *int64
+	// AdminMode 为 true 时表示管理员在「我的账户 → API 密钥」页面查看全系统 Key,
+	// 此时不再按调用者 userID 过滤。普通用户恒为 false。
+	AdminMode bool
 }

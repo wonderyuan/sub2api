@@ -2198,6 +2198,46 @@ func (r *stubApiKeyRepo) ListByUserID(ctx context.Context, userID int64, params 
 	}, nil
 }
 
+// ListAll 管理员全局视图的测试桩：列出全部（或按 filters.UserID 过滤）。
+func (r *stubApiKeyRepo) ListAll(ctx context.Context, params pagination.PaginationParams, filters service.APIKeyListFilters) ([]service.APIKey, *pagination.PaginationResult, error) {
+	ids := make([]int64, 0, len(r.byID))
+	for id := range r.byID {
+		if filters.UserID != nil && r.byID[id].UserID != *filters.UserID {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] > ids[j] })
+
+	start := params.Offset()
+	if start > len(ids) {
+		start = len(ids)
+	}
+	end := start + params.Limit()
+	if end > len(ids) {
+		end = len(ids)
+	}
+
+	out := make([]service.APIKey, 0, end-start)
+	for _, id := range ids[start:end] {
+		clone := *r.byID[id]
+		out = append(out, clone)
+	}
+
+	total := int64(len(ids))
+	pageSize := params.Limit()
+	pages := int(math.Ceil(float64(total) / float64(pageSize)))
+	if pages < 1 {
+		pages = 1
+	}
+	return out, &pagination.PaginationResult{
+		Total:    total,
+		Page:     params.Page,
+		PageSize: pageSize,
+		Pages:    pages,
+	}, nil
+}
+
 func (r *stubApiKeyRepo) VerifyOwnership(ctx context.Context, userID int64, apiKeyIDs []int64) ([]int64, error) {
 	if len(apiKeyIDs) == 0 {
 		return []int64{}, nil

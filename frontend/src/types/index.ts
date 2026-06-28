@@ -578,6 +578,13 @@ export interface ApiKey {
   created_at: string
   updated_at: string
   group?: Group
+  user?: {
+    id: number
+    username: string
+    email: string
+    role: string
+    status: string
+  }
   rate_limit_5h: number
   rate_limit_1d: number
   rate_limit_7d: number

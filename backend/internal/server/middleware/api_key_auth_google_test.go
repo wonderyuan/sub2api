@@ -62,6 +62,9 @@ func (f fakeAPIKeyRepo) DeleteWithAudit(ctx context.Context, id int64) error {
 func (f fakeAPIKeyRepo) ListByUserID(ctx context.Context, userID int64, params pagination.PaginationParams, _ service.APIKeyListFilters) ([]service.APIKey, *pagination.PaginationResult, error) {
 	return nil, nil, errors.New("not implemented")
 }
+func (f fakeAPIKeyRepo) ListAll(ctx context.Context, params pagination.PaginationParams, _ service.APIKeyListFilters) ([]service.APIKey, *pagination.PaginationResult, error) {
+	return nil, nil, errors.New("not implemented")
+}
 func (f fakeAPIKeyRepo) VerifyOwnership(ctx context.Context, userID int64, apiKeyIDs []int64) ([]int64, error) {
 	return nil, errors.New("not implemented")
 }

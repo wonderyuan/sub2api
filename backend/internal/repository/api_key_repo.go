@@ -5,12 +5,14 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/apikey"
 	"github.com/Wei-Shaw/sub2api/ent/group"
+	predicate "github.com/Wei-Shaw/sub2api/ent/predicate"
 	"github.com/Wei-Shaw/sub2api/ent/schema/mixins"
 	"github.com/Wei-Shaw/sub2api/ent/user"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -410,6 +412,75 @@ func (r *apiKeyRepository) ListByUserID(ctx context.Context, userID int64, param
 	}
 
 	keysQuery := q.
+		WithUser().
+		WithGroup().
+		Offset(params.Offset()).
+		Limit(params.Limit())
+	for _, order := range apiKeyListOrder(params) {
+		keysQuery = keysQuery.Order(order)
+	}
+
+	keys, err := keysQuery.All(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	outKeys := make([]service.APIKey, 0, len(keys))
+	for i := range keys {
+		outKeys = append(outKeys, *apiKeyEntityToService(keys[i]))
+	}
+
+	return outKeys, paginationResultFromTotal(int64(total), params), nil
+}
+
+// ListAll 列出全系统所有用户的 API Key（管理员全局视图）。
+// 与 ListByUserID 不同，它不会按调用者 userID 过滤；仅当 filters.UserID 非 nil 时
+// 才按该指定用户过滤。search 同时匹配 key 名称、key 字符串、所属用户名、邮箱，
+// 以及（当 search 为纯数字时）所属用户 ID。结果会预加载 User 与 Group 边。
+func (r *apiKeyRepository) ListAll(ctx context.Context, params pagination.PaginationParams, filters service.APIKeyListFilters) ([]service.APIKey, *pagination.PaginationResult, error) {
+	q := r.activeQuery()
+
+	// 仅当显式按某用户筛选时才追加 user_id 过滤
+	if filters.UserID != nil {
+		q = q.Where(apikey.UserIDEQ(*filters.UserID))
+	}
+
+	// Apply filters
+	if filters.Search != "" {
+		searchPreds := []predicate.APIKey{
+			apikey.NameContainsFold(filters.Search),
+			apikey.KeyContainsFold(filters.Search),
+			apikey.HasUserWith(
+				user.Or(
+					user.UsernameContainsFold(filters.Search),
+					user.EmailContainsFold(filters.Search),
+				),
+			),
+		}
+		// search 为纯数字时额外匹配所属用户 ID
+		if uid, err := strconv.ParseInt(filters.Search, 10, 64); err == nil {
+			searchPreds = append(searchPreds, apikey.UserIDEQ(uid))
+		}
+		q = q.Where(apikey.Or(searchPreds...))
+	}
+	if filters.Status != "" {
+		q = q.Where(apikey.StatusEQ(filters.Status))
+	}
+	if filters.GroupID != nil {
+		if *filters.GroupID == 0 {
+			q = q.Where(apikey.GroupIDIsNil())
+		} else {
+			q = q.Where(apikey.GroupIDEQ(*filters.GroupID))
+		}
+	}
+
+	total, err := q.Count(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	keysQuery := q.
+		WithUser().
 		WithGroup().
 		Offset(params.Offset()).
 		Limit(params.Limit())

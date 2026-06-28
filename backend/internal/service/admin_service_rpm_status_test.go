@@ -28,6 +28,10 @@ func (s *rpmStatusAPIKeyRepoStub) ListByUserID(_ context.Context, _ int64, _ pag
 	return s.keys, &pagination.PaginationResult{Total: int64(len(s.keys))}, nil
 }
 
+func (s *rpmStatusAPIKeyRepoStub) ListAll(_ context.Context, params pagination.PaginationParams, _ APIKeyListFilters) ([]APIKey, *pagination.PaginationResult, error) {
+	return s.keys, &pagination.PaginationResult{Total: int64(len(s.keys))}, nil
+}
+
 type rpmStatusGroupRepoStub struct {
 	GroupRepository
 	groups map[int64]*Group
