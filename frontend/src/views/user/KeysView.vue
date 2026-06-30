@@ -73,7 +73,12 @@
               </button>
             </div>
           </div>
-          <button @click="showCreateModal = true" class="btn btn-primary" data-tour="keys-create-btn">
+          <button
+            v-if="isAdmin"
+            @click="showCreateModal = true"
+            class="btn btn-primary"
+            data-tour="keys-create-btn"
+          >
             <Icon name="plus" size="md" class="mr-2" />
             {{ t('keys.createKey') }}
           </button>
@@ -145,6 +150,7 @@
           <template #cell-group="{ row }">
             <div class="group/dropdown relative">
               <button
+                v-if="isAdmin"
                 :ref="(el) => setGroupButtonRef(row.id, el)"
                 @click="openGroupSelector(row)"
                 class="-mx-2 -my-1 flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1 transition-all duration-200 hover:bg-gray-100 dark:hover:bg-dark-700"
@@ -176,6 +182,19 @@
                   />
                 </svg>
               </button>
+              <div v-else class="flex items-center gap-2">
+                <GroupBadge
+                  v-if="row.group"
+                  :name="row.group.name"
+                  :platform="row.group.platform"
+                  :subscription-type="row.group.subscription_type"
+                  :rate-multiplier="row.group.rate_multiplier"
+                  :user-rate-multiplier="userGroupRates[row.group.id]"
+                />
+                <span v-else class="text-sm text-gray-400 dark:text-dark-500">{{
+                  t('keys.noGroup')
+                }}</span>
+              </div>
             </div>
           </template>
 
@@ -309,7 +328,7 @@
               </div>
               <!-- Reset button -->
               <button
-                v-if="row.usage_5h > 0 || row.usage_1d > 0 || row.usage_7d > 0"
+                v-if="isAdmin && (row.usage_5h > 0 || row.usage_1d > 0 || row.usage_7d > 0)"
                 @click.stop="confirmResetRateLimitFromTable(row)"
                 class="mt-0.5 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-gray-500 transition-colors hover:bg-gray-100 hover:text-primary-600 dark:hover:bg-dark-700 dark:hover:text-primary-400"
                 :title="t('keys.resetRateLimitUsage')"
@@ -354,7 +373,7 @@
             <span class="text-sm text-gray-500 dark:text-dark-400">{{ formatDateTime(value) }}</span>
           </template>
 
-          <template #cell-actions="{ row }">
+          <template v-if="isAdmin" #cell-actions="{ row }">
             <div class="flex items-center gap-1">
               <!-- Use Key Button -->
               <button
@@ -409,8 +428,8 @@
           <template #empty>
             <EmptyState
               :title="t('keys.noKeysYet')"
-              :description="t('keys.createFirstKey')"
-              :action-text="t('keys.createKey')"
+              :description="isAdmin ? t('keys.createFirstKey') : t('keys.readOnlyEmptyDescription')"
+              :action-text="isAdmin ? t('keys.createKey') : undefined"
               @action="showCreateModal = true"
             />
           </template>
@@ -431,6 +450,7 @@
 
     <!-- Create/Edit Modal -->
     <BaseDialog
+      v-if="isAdmin"
       :show="showCreateModal || showEditModal"
       :title="showEditModal ? t('keys.editKey') : t('keys.createKey')"
       width="normal"
@@ -931,6 +951,7 @@
 
     <!-- Delete Confirmation Dialog -->
     <ConfirmDialog
+      v-if="isAdmin"
       :show="showDeleteDialog"
       :title="t('keys.deleteKey')"
       :message="t('keys.deleteConfirmMessage', { name: selectedKey?.name })"
@@ -943,6 +964,7 @@
 
     <!-- Reset Quota Confirmation Dialog -->
     <ConfirmDialog
+      v-if="isAdmin"
       :show="showResetQuotaDialog"
       :title="t('keys.resetQuotaTitle')"
       :message="t('keys.resetQuotaConfirmMessage', { name: selectedKey?.name, used: selectedKey?.quota_used?.toFixed(4) })"
@@ -955,6 +977,7 @@
 
     <!-- Reset Rate Limit Confirmation Dialog -->
     <ConfirmDialog
+      v-if="isAdmin"
       :show="showResetRateLimitDialog"
       :title="t('keys.resetRateLimitTitle')"
       :message="t('keys.resetRateLimitConfirmMessage', { name: selectedKey?.name })"
@@ -1025,7 +1048,7 @@
     <!-- Group Selector Dropdown (Teleported to body to avoid overflow clipping) -->
     <Teleport to="body">
       <div
-        v-if="groupSelectorKeyId !== null && dropdownPosition"
+        v-if="isAdmin && groupSelectorKeyId !== null && dropdownPosition"
         ref="dropdownRef"
         class="animate-in fade-in slide-in-from-top-2 fixed z-[100000020] w-max min-w-[380px] overflow-hidden rounded-xl bg-white shadow-lg ring-1 ring-black/5 duration-200 dark:bg-dark-800 dark:ring-white/10"
         style="pointer-events: auto !important;"
@@ -1164,9 +1187,11 @@ const allColumns = computed<Column[]>(() => {
     { key: 'expires_at', label: t('keys.expiresAt'), sortable: true },
     { key: 'status', label: t('common.status'), sortable: true },
     { key: 'last_used_at', label: t('keys.lastUsedAt'), sortable: true },
-    { key: 'created_at', label: t('keys.created'), sortable: true },
-    { key: 'actions', label: t('common.actions'), sortable: false }
+    { key: 'created_at', label: t('keys.created'), sortable: true }
   )
+  if (isAdmin.value) {
+    cols.push({ key: 'actions', label: t('common.actions'), sortable: false })
+  }
   return cols
 })
 
@@ -1518,6 +1543,7 @@ const handleSort = (key: string, order: 'asc' | 'desc') => {
 }
 
 const editKey = (key: ApiKey) => {
+  if (!isAdmin.value) return
   selectedKey.value = key
   const hasIPRestriction = (key.ip_whitelist?.length > 0) || (key.ip_blacklist?.length > 0)
   const hasExpiration = !!key.expires_at
@@ -1544,6 +1570,7 @@ const editKey = (key: ApiKey) => {
 }
 
 const toggleKeyStatus = async (key: ApiKey) => {
+  if (!isAdmin.value) return
   const newStatus = key.status === 'active' ? 'inactive' : 'active'
   try {
     await keysAPI.toggleStatus(key.id, newStatus)
@@ -1557,6 +1584,7 @@ const toggleKeyStatus = async (key: ApiKey) => {
 }
 
 const openGroupSelector = (key: ApiKey) => {
+  if (!isAdmin.value) return
   if (groupSelectorKeyId.value === key.id) {
     groupSelectorKeyId.value = null
     dropdownPosition.value = null
@@ -1588,6 +1616,7 @@ const openGroupSelector = (key: ApiKey) => {
 }
 
 const changeGroup = async (key: ApiKey, newGroupId: number | null) => {
+  if (!isAdmin.value) return
   groupSelectorKeyId.value = null
   dropdownPosition.value = null
   if (key.group_id === newGroupId) return
@@ -1614,11 +1643,13 @@ const closeGroupSelector = (event: MouseEvent) => {
 }
 
 const confirmDelete = (key: ApiKey) => {
+  if (!isAdmin.value) return
   selectedKey.value = key
   showDeleteDialog.value = true
 }
 
 const handleSubmit = async () => {
+  if (!isAdmin.value) return
   // Validate group_id is required
   if (formData.value.group_id === null) {
     appStore.showError(t('keys.groupRequired'))
@@ -1726,6 +1757,7 @@ const handleSubmit = async () => {
  * 若后端未返回消息则显示默认的国际化文本
  */
 const handleDelete = async () => {
+  if (!isAdmin.value) return
   if (!selectedKey.value) return
 
   try {
@@ -1767,6 +1799,7 @@ const closeModals = () => {
 
 // Show reset quota confirmation dialog
 const confirmResetQuota = () => {
+  if (!isAdmin.value) return
   showResetQuotaDialog.value = true
 }
 
@@ -1780,6 +1813,7 @@ const setExpirationDays = (days: number) => {
 
 // Reset quota used for an API key
 const resetQuotaUsed = async () => {
+  if (!isAdmin.value) return
   if (!selectedKey.value) return
   showResetQuotaDialog.value = false
   try {
@@ -1797,17 +1831,20 @@ const resetQuotaUsed = async () => {
 
 // Show reset rate limit confirmation dialog (from edit modal)
 const confirmResetRateLimit = () => {
+  if (!isAdmin.value) return
   showResetRateLimitDialog.value = true
 }
 
 // Show reset rate limit confirmation dialog (from table row)
 const confirmResetRateLimitFromTable = (row: ApiKey) => {
+  if (!isAdmin.value) return
   selectedKey.value = row
   showResetRateLimitDialog.value = true
 }
 
 // Reset rate limit usage for an API key
 const resetRateLimitUsage = async () => {
+  if (!isAdmin.value) return
   if (!selectedKey.value) return
   showResetRateLimitDialog.value = false
   try {

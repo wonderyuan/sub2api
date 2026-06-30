@@ -212,42 +212,65 @@ func TestAPIContracts(t *testing.T) {
 			}`,
 		},
 		{
-			name:   "POST /api/v1/keys",
+			name:   "POST /api/v1/keys requires admin",
 			method: http.MethodPost,
 			path:   "/api/v1/keys",
 			body:   `{"name":"Key One","custom_key":"sk_custom_1234567890"}`,
 			headers: map[string]string{
 				"Content-Type": "application/json",
 			},
-			wantStatus: http.StatusOK,
+			wantStatus: http.StatusForbidden,
 			wantJSON: `{
-				"code": 0,
-				"message": "success",
-				"data": {
-					"id": 100,
-					"user_id": 1,
-					"key": "sk_custom_1234567890",
-					"name": "Key One",
-					"group_id": null,
-					"status": "active",
-					"ip_whitelist": null,
-					"ip_blacklist": null,
-					"last_used_at": null,
-					"quota": 0,
-					"quota_used": 0,
-					"rate_limit_5h": 0,
-					"rate_limit_1d": 0,
-					"rate_limit_7d": 0,
-					"usage_5h": 0,
-					"usage_1d": 0,
-					"usage_7d": 0,
-					"window_5h_start": null,
-					"window_1d_start": null,
-					"window_7d_start": null,
-					"expires_at": null,
-					"created_at": "2025-01-02T03:04:05Z",
-					"updated_at": "2025-01-02T03:04:05Z"
-				}
+				"code": 403,
+				"message": "Only administrators can manage API keys"
+			}`,
+		},
+		{
+			name: "PUT /api/v1/keys/:id requires admin",
+			setup: func(t *testing.T, deps *contractDeps) {
+				t.Helper()
+				deps.apiKeyRepo.MustSeed(&service.APIKey{
+					ID:        100,
+					UserID:    1,
+					Key:       "sk_custom_1234567890",
+					Name:      "Key One",
+					Status:    service.StatusActive,
+					CreatedAt: deps.now,
+					UpdatedAt: deps.now,
+				})
+			},
+			method: http.MethodPut,
+			path:   "/api/v1/keys/100",
+			body:   `{"name":"Renamed"}`,
+			headers: map[string]string{
+				"Content-Type": "application/json",
+			},
+			wantStatus: http.StatusForbidden,
+			wantJSON: `{
+				"code": 403,
+				"message": "Only administrators can manage API keys"
+			}`,
+		},
+		{
+			name: "DELETE /api/v1/keys/:id requires admin",
+			setup: func(t *testing.T, deps *contractDeps) {
+				t.Helper()
+				deps.apiKeyRepo.MustSeed(&service.APIKey{
+					ID:        100,
+					UserID:    1,
+					Key:       "sk_custom_1234567890",
+					Name:      "Key One",
+					Status:    service.StatusActive,
+					CreatedAt: deps.now,
+					UpdatedAt: deps.now,
+				})
+			},
+			method:     http.MethodDelete,
+			path:       "/api/v1/keys/100",
+			wantStatus: http.StatusForbidden,
+			wantJSON: `{
+				"code": 403,
+				"message": "Only administrators can manage API keys"
 			}`,
 		},
 		{
@@ -1338,6 +1361,8 @@ func newContractDeps(t *testing.T) *contractDeps {
 	v1Keys.Use(jwtAuth)
 	v1Keys.GET("/keys", apiKeyHandler.List)
 	v1Keys.POST("/keys", apiKeyHandler.Create)
+	v1Keys.PUT("/keys/:id", apiKeyHandler.Update)
+	v1Keys.DELETE("/keys/:id", apiKeyHandler.Delete)
 	v1Keys.GET("/groups/available", apiKeyHandler.GetAvailableGroups)
 
 	v1Usage := v1.Group("")

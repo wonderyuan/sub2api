@@ -126,6 +126,14 @@ func isAdminRole(c *gin.Context) bool {
 	return ok && role == service.RoleAdmin
 }
 
+func requireAdminAPIKeyManagement(c *gin.Context) bool {
+	if isAdminRole(c) {
+		return true
+	}
+	response.Forbidden(c, "Only administrators can manage API keys")
+	return false
+}
+
 // GetByID handles getting a single API key
 // GET /api/v1/api-keys/:id
 func (h *APIKeyHandler) GetByID(c *gin.Context) {
@@ -162,6 +170,9 @@ func (h *APIKeyHandler) Create(c *gin.Context) {
 	subject, ok := middleware2.GetAuthSubjectFromContext(c)
 	if !ok {
 		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+	if !requireAdminAPIKeyManagement(c) {
 		return
 	}
 
@@ -207,6 +218,9 @@ func (h *APIKeyHandler) Update(c *gin.Context) {
 	subject, ok := middleware2.GetAuthSubjectFromContext(c)
 	if !ok {
 		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+	if !requireAdminAPIKeyManagement(c) {
 		return
 	}
 
@@ -280,6 +294,9 @@ func (h *APIKeyHandler) Delete(c *gin.Context) {
 	subject, ok := middleware2.GetAuthSubjectFromContext(c)
 	if !ok {
 		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+	if !requireAdminAPIKeyManagement(c) {
 		return
 	}
 
