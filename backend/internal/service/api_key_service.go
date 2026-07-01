@@ -156,6 +156,7 @@ type APIKeyAuthCacheInvalidator interface {
 // CreateAPIKeyRequest 创建API Key请求
 type CreateAPIKeyRequest struct {
 	Name        string   `json:"name"`
+	UserID      *int64   `json:"user_id"` // Optional target owner; nil uses the authenticated user.
 	GroupID     *int64   `json:"group_id"`
 	CustomKey   *string  `json:"custom_key"`   // 可选的自定义key
 	IPWhitelist []string `json:"ip_whitelist"` // IP 白名单
@@ -333,8 +334,13 @@ func (s *APIKeyService) canUserBindGroup(ctx context.Context, user *User, group 
 
 // Create 创建API Key
 func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIKeyRequest) (*APIKey, error) {
+	targetUserID := userID
+	if req.UserID != nil && *req.UserID > 0 {
+		targetUserID = *req.UserID
+	}
+
 	// 验证用户存在
-	user, err := s.userRepo.GetByID(ctx, userID)
+	user, err := s.userRepo.GetByID(ctx, targetUserID)
 	if err != nil {
 		return nil, fmt.Errorf("get user: %w", err)
 	}
@@ -371,7 +377,7 @@ func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIK
 	// 判断是否使用自定义Key
 	if req.CustomKey != nil && *req.CustomKey != "" {
 		// 检查限流（仅对自定义key进行限流）
-		if err := s.checkAPIKeyRateLimit(ctx, userID); err != nil {
+		if err := s.checkAPIKeyRateLimit(ctx, targetUserID); err != nil {
 			return nil, err
 		}
 
@@ -387,7 +393,7 @@ func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIK
 		}
 		if exists {
 			// Key已存在，增加错误计数
-			s.incrementAPIKeyErrorCount(ctx, userID)
+			s.incrementAPIKeyErrorCount(ctx, targetUserID)
 			return nil, ErrAPIKeyExists
 		}
 
@@ -403,7 +409,7 @@ func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIK
 
 	// 创建API Key记录
 	apiKey := &APIKey{
-		UserID:      userID,
+		UserID:      targetUserID,
 		Key:         key,
 		Name:        html.EscapeString(req.Name),
 		GroupID:     req.GroupID,

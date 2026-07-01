@@ -75,7 +75,7 @@
           </div>
           <button
             v-if="isAdmin"
-            @click="showCreateModal = true"
+            @click="openCreateModal"
             class="btn btn-primary"
             data-tour="keys-create-btn"
           >
@@ -430,7 +430,7 @@
               :title="t('keys.noKeysYet')"
               :description="isAdmin ? t('keys.createFirstKey') : t('keys.readOnlyEmptyDescription')"
               :action-text="isAdmin ? t('keys.createKey') : undefined"
-              @action="showCreateModal = true"
+              @action="openCreateModal"
             />
           </template>
         </DataTable>
@@ -457,6 +457,17 @@
       @close="closeModals"
     >
       <form id="key-form" @submit.prevent="handleSubmit" class="space-y-5">
+        <div v-if="!showEditModal">
+          <label class="input-label">{{ t('keys.userLabel') }}</label>
+          <Select
+            v-model="formData.user_id"
+            :options="userOptions"
+            :placeholder="t('keys.selectUser')"
+            :searchable="true"
+            :search-placeholder="t('keys.searchUser')"
+          />
+        </div>
+
         <div>
           <label class="input-label">{{ t('keys.nameLabel') }}</label>
           <input
@@ -1137,7 +1148,7 @@ import UseKeyModal from '@/components/keys/UseKeyModal.vue'
 import EndpointPopover from '@/components/keys/EndpointPopover.vue'
 import GroupBadge from '@/components/common/GroupBadge.vue'
 import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
-import type { ApiKey, Group, PublicSettings, SubscriptionType, GroupPlatform, UpdateApiKeyRequest } from '@/types'
+import type { AdminUser, ApiKey, Group, PublicSettings, SubscriptionType, GroupPlatform, UpdateApiKeyRequest } from '@/types'
 import type { Column } from '@/components/common/types'
 import type { BatchApiKeyUsageStats } from '@/api/usage'
 import { formatDateTime } from '@/utils/format'
@@ -1258,7 +1269,9 @@ const columns = computed<Column[]>(() =>
 
 const apiKeys = ref<ApiKey[]>([])
 const groups = ref<Group[]>([])
+const users = ref<AdminUser[]>([])
 const loading = ref(false)
+const usersLoading = ref(false)
 const submitting = ref(false)
 const now = ref(new Date())
 let resetTimer: ReturnType<typeof setInterval> | null = null
@@ -1316,6 +1329,7 @@ const setGroupButtonRef = (keyId: number, el: Element | ComponentPublicInstance 
 
 const formData = ref({
   name: '',
+  user_id: null as number | null,
   group_id: null as number | null,
   status: 'active' as 'active' | 'inactive',
   use_custom_key: false,
@@ -1356,6 +1370,17 @@ const statusOptions = computed(() => [
   { value: 'active', label: t('common.active') },
   { value: 'inactive', label: t('common.inactive') }
 ])
+
+const userOptions = computed(() =>
+  users.value.map((user) => {
+    const displayName = user.username?.trim() || user.email
+    return {
+      value: user.id,
+      label: `${displayName} <${user.email}> (ID: ${user.id})`,
+      description: user.status
+    }
+  })
+)
 
 const shouldSubmitEditStatus = (key: ApiKey, status: 'active' | 'inactive') => {
   if (key.status === 'quota_exhausted' || key.status === 'expired') {
@@ -1498,6 +1523,37 @@ const loadGroups = async () => {
   }
 }
 
+const loadUsers = async () => {
+  if (!isAdmin.value || usersLoading.value) return
+  usersLoading.value = true
+  try {
+    const pageSize = 1000
+    let page = 1
+    let pages = 1
+    const items: AdminUser[] = []
+    do {
+      const response = await adminAPI.users.list(page, pageSize, { sort_by: 'email', sort_order: 'asc' })
+      items.push(...response.items)
+      pages = response.pages || 1
+      page += 1
+    } while (page <= pages)
+    users.value = items
+  } catch (error) {
+    console.error('Failed to load users:', error)
+    appStore.showError(t('keys.failedToLoadUsers'))
+  } finally {
+    usersLoading.value = false
+  }
+}
+
+const openCreateModal = async () => {
+  if (!isAdmin.value) return
+  showCreateModal.value = true
+  if (users.value.length === 0) {
+    await loadUsers()
+  }
+}
+
 const loadUserGroupRates = async () => {
   try {
     userGroupRates.value = await userGroupsAPI.getUserGroupRates()
@@ -1549,6 +1605,7 @@ const editKey = (key: ApiKey) => {
   const hasExpiration = !!key.expires_at
   formData.value = {
     name: key.name,
+    user_id: key.user_id,
     group_id: key.group_id,
     status: key.status === 'quota_exhausted' || key.status === 'expired' ? 'inactive' : key.status,
     use_custom_key: false,
@@ -1650,6 +1707,10 @@ const confirmDelete = (key: ApiKey) => {
 
 const handleSubmit = async () => {
   if (!isAdmin.value) return
+  if (!showEditModal.value && !formData.value.user_id) {
+    appStore.showError(t('keys.userRequired'))
+    return
+  }
   // Validate group_id is required
   if (formData.value.group_id === null) {
     appStore.showError(t('keys.groupRequired'))
@@ -1726,6 +1787,7 @@ const handleSubmit = async () => {
       const customKey = formData.value.use_custom_key ? formData.value.custom_key : undefined
       await keysAPI.create(
         formData.value.name,
+        formData.value.user_id,
         formData.value.group_id,
         customKey,
         ipWhitelist,
@@ -1778,6 +1840,7 @@ const closeModals = () => {
   selectedKey.value = null
   formData.value = {
     name: '',
+    user_id: null,
     group_id: null,
     status: 'active',
     use_custom_key: false,
@@ -1951,6 +2014,9 @@ onMounted(() => {
   loadSavedColumns()
   loadApiKeys()
   loadGroups()
+  if (isAdmin.value) {
+    loadUsers()
+  }
   loadUserGroupRates()
   loadPublicSettings()
   document.addEventListener('click', closeGroupSelector)

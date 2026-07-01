@@ -601,6 +601,7 @@ export interface ApiKey {
 
 export interface CreateApiKeyRequest {
   name: string
+  user_id?: number
   group_id?: number | null
   custom_key?: string // Optional custom API Key
   ip_whitelist?: string[]

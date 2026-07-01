@@ -11,6 +11,8 @@ const {
   getDashboardApiKeysUsage,
   getAvailableGroups,
   getUserGroupRates,
+  getAllIncludingInactiveGroups,
+  listAdminUsers,
   showError,
   showSuccess,
   copyToClipboard,
@@ -22,6 +24,8 @@ const {
   getDashboardApiKeysUsage: vi.fn(),
   getAvailableGroups: vi.fn(),
   getUserGroupRates: vi.fn(),
+  getAllIncludingInactiveGroups: vi.fn(),
+  listAdminUsers: vi.fn(),
   showError: vi.fn(),
   showSuccess: vi.fn(),
   copyToClipboard: vi.fn(),
@@ -73,6 +77,14 @@ vi.mock('@/api', () => ({
   userGroupsAPI: {
     getAvailable: getAvailableGroups,
     getUserGroupRates,
+  },
+  adminAPI: {
+    groups: {
+      getAllIncludingInactive: getAllIncludingInactiveGroups,
+    },
+    users: {
+      list: listAdminUsers,
+    },
   },
 }))
 
@@ -250,6 +262,8 @@ describe('user KeysView column settings', () => {
     getDashboardApiKeysUsage.mockReset()
     getAvailableGroups.mockReset()
     getUserGroupRates.mockReset()
+    getAllIncludingInactiveGroups.mockReset()
+    listAdminUsers.mockReset()
     showError.mockReset()
     showSuccess.mockReset()
     copyToClipboard.mockReset()
@@ -267,6 +281,14 @@ describe('user KeysView column settings', () => {
     getDashboardApiKeysUsage.mockResolvedValue({ stats: {} })
     getAvailableGroups.mockResolvedValue([])
     getUserGroupRates.mockResolvedValue({})
+    getAllIncludingInactiveGroups.mockResolvedValue([])
+    listAdminUsers.mockResolvedValue({
+      items: [],
+      total: 0,
+      page: 1,
+      page_size: 20,
+      pages: 0,
+    })
     isCurrentStep.mockReturnValue(false)
   })
 

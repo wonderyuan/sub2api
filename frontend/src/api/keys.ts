@@ -49,6 +49,7 @@ export async function getById(id: number): Promise<ApiKey> {
 /**
  * Create new API key
  * @param name - Key name
+ * @param userId - Optional target user ID for admin-created keys
  * @param groupId - Optional group ID
  * @param customKey - Optional custom key value
  * @param ipWhitelist - Optional IP whitelist
@@ -60,6 +61,7 @@ export async function getById(id: number): Promise<ApiKey> {
  */
 export async function create(
   name: string,
+  userId?: number | null,
   groupId?: number | null,
   customKey?: string,
   ipWhitelist?: string[],
@@ -69,6 +71,9 @@ export async function create(
   rateLimitData?: { rate_limit_5h?: number; rate_limit_1d?: number; rate_limit_7d?: number }
 ): Promise<ApiKey> {
   const payload: CreateApiKeyRequest = { name }
+  if (userId !== undefined && userId !== null) {
+    payload.user_id = userId
+  }
   if (groupId !== undefined) {
     payload.group_id = groupId
   }
