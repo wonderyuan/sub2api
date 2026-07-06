@@ -76,6 +76,8 @@ const (
 	FieldDurationMs = "duration_ms"
 	// FieldFirstTokenMs holds the string denoting the first_token_ms field in the database.
 	FieldFirstTokenMs = "first_token_ms"
+	// FieldRequestBodyBytes holds the string denoting the request_body_bytes field in the database.
+	FieldRequestBodyBytes = "request_body_bytes"
 	// FieldUserAgent holds the string denoting the user_agent field in the database.
 	FieldUserAgent = "user_agent"
 	// FieldIPAddress holds the string denoting the ip_address field in the database.
@@ -179,6 +181,7 @@ var Columns = []string{
 	FieldStream,
 	FieldDurationMs,
 	FieldFirstTokenMs,
+	FieldRequestBodyBytes,
 	FieldUserAgent,
 	FieldIPAddress,
 	FieldImageCount,
@@ -246,6 +249,8 @@ var (
 	DefaultBillingType int8
 	// DefaultStream holds the default value on creation for the "stream" field.
 	DefaultStream bool
+	// DefaultRequestBodyBytes holds the default value on creation for the "request_body_bytes" field.
+	DefaultRequestBodyBytes int64
 	// UserAgentValidator is a validator for the "user_agent" field. It is called by the builders before save.
 	UserAgentValidator func(string) error
 	// IPAddressValidator is a validator for the "ip_address" field. It is called by the builders before save.
@@ -427,6 +432,11 @@ func ByDurationMs(opts ...sql.OrderTermOption) OrderOption {
 // ByFirstTokenMs orders the results by the first_token_ms field.
 func ByFirstTokenMs(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldFirstTokenMs, opts...).ToFunc()
+}
+
+// ByRequestBodyBytes orders the results by the request_body_bytes field.
+func ByRequestBodyBytes(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldRequestBodyBytes, opts...).ToFunc()
 }
 
 // ByUserAgent orders the results by the user_agent field.

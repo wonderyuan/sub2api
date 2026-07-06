@@ -1335,6 +1335,19 @@
         </div>
       </div>
       <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
+        <label class="input-label">{{ t('admin.accounts.requestBodyLimit') }}</label>
+        <input
+          v-model.number="requestBodyLimitMB"
+          type="number"
+          min="0"
+          step="0.1"
+          class="input"
+          :placeholder="t('admin.accounts.requestBodyLimitPlaceholder')"
+        />
+        <p class="input-hint">{{ t('admin.accounts.requestBodyLimitHint') }}</p>
+      </div>
+
+      <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
         <label class="input-label">{{ t('admin.accounts.expiresAt') }}</label>
         <input v-model="expiresAtInput" type="datetime-local" class="input" />
         <p class="input-hint">{{ t('admin.accounts.expiresAtHint') }}</p>
@@ -2604,6 +2617,7 @@ const baseRpm = ref<number | null>(null)
 const rpmStrategy = ref<'tiered' | 'sticky_exempt'>('tiered')
 const rpmStickyBuffer = ref<number | null>(null)
 const userMsgQueueMode = ref('')
+const requestBodyLimitMB = ref<number | null>(null)
 const umqModeOptions = computed(() => [
   { value: '', label: t('admin.accounts.quotaControl.rpmLimit.umqModeOff') },
   { value: 'throttle', label: t('admin.accounts.quotaControl.rpmLimit.umqModeThrottle') },
@@ -3043,6 +3057,10 @@ const syncFormFromAccount = (newAccount: Account | null) => {
 	autoPause7dThreshold.value = typeof extra?.auto_pause_7d_threshold === 'number' ? extra.auto_pause_7d_threshold * 100 : null
 	autoPause5hDisabled.value = extra?.auto_pause_5h_disabled === true
 	autoPause7dDisabled.value = extra?.auto_pause_7d_disabled === true
+  const requestBodyLimitBytes = Number(extra?.request_body_limit_bytes || 0)
+  requestBodyLimitMB.value = Number.isFinite(requestBodyLimitBytes) && requestBodyLimitBytes > 0
+    ? Math.round((requestBodyLimitBytes / 1024 / 1024) * 10) / 10
+    : null
 
   // Load OpenAI passthrough toggle (OpenAI OAuth/SetupToken/API Key)
   openaiPassthroughEnabled.value = false
@@ -4311,6 +4329,19 @@ const handleSubmit = async () => {
       }
       // Quota notify config
       writeQuotaNotifyToExtra(newExtra, 'update')
+      updatePayload.extra = newExtra
+    }
+
+    {
+      const currentExtra = (updatePayload.extra as Record<string, unknown>) ||
+        (props.account.extra as Record<string, unknown>) || {}
+      const newExtra: Record<string, unknown> = { ...currentExtra }
+      const limitMB = Number(requestBodyLimitMB.value || 0)
+      if (Number.isFinite(limitMB) && limitMB > 0) {
+        newExtra.request_body_limit_bytes = Math.floor(limitMB * 1024 * 1024)
+      } else {
+        delete newExtra.request_body_limit_bytes
+      }
       updatePayload.extra = newExtra
     }
 

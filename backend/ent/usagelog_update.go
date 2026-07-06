@@ -658,6 +658,27 @@ func (_u *UsageLogUpdate) ClearFirstTokenMs() *UsageLogUpdate {
 	return _u
 }
 
+// SetRequestBodyBytes sets the "request_body_bytes" field.
+func (_u *UsageLogUpdate) SetRequestBodyBytes(v int64) *UsageLogUpdate {
+	_u.mutation.ResetRequestBodyBytes()
+	_u.mutation.SetRequestBodyBytes(v)
+	return _u
+}
+
+// SetNillableRequestBodyBytes sets the "request_body_bytes" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillableRequestBodyBytes(v *int64) *UsageLogUpdate {
+	if v != nil {
+		_u.SetRequestBodyBytes(*v)
+	}
+	return _u
+}
+
+// AddRequestBodyBytes adds value to the "request_body_bytes" field.
+func (_u *UsageLogUpdate) AddRequestBodyBytes(v int64) *UsageLogUpdate {
+	_u.mutation.AddRequestBodyBytes(v)
+	return _u
+}
+
 // SetUserAgent sets the "user_agent" field.
 func (_u *UsageLogUpdate) SetUserAgent(v string) *UsageLogUpdate {
 	_u.mutation.SetUserAgent(v)
@@ -1161,6 +1182,12 @@ func (_u *UsageLogUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if _u.mutation.FirstTokenMsCleared() {
 		_spec.ClearField(usagelog.FieldFirstTokenMs, field.TypeInt)
+	}
+	if value, ok := _u.mutation.RequestBodyBytes(); ok {
+		_spec.SetField(usagelog.FieldRequestBodyBytes, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedRequestBodyBytes(); ok {
+		_spec.AddField(usagelog.FieldRequestBodyBytes, field.TypeInt64, value)
 	}
 	if value, ok := _u.mutation.UserAgent(); ok {
 		_spec.SetField(usagelog.FieldUserAgent, field.TypeString, value)
@@ -2004,6 +2031,27 @@ func (_u *UsageLogUpdateOne) ClearFirstTokenMs() *UsageLogUpdateOne {
 	return _u
 }
 
+// SetRequestBodyBytes sets the "request_body_bytes" field.
+func (_u *UsageLogUpdateOne) SetRequestBodyBytes(v int64) *UsageLogUpdateOne {
+	_u.mutation.ResetRequestBodyBytes()
+	_u.mutation.SetRequestBodyBytes(v)
+	return _u
+}
+
+// SetNillableRequestBodyBytes sets the "request_body_bytes" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillableRequestBodyBytes(v *int64) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetRequestBodyBytes(*v)
+	}
+	return _u
+}
+
+// AddRequestBodyBytes adds value to the "request_body_bytes" field.
+func (_u *UsageLogUpdateOne) AddRequestBodyBytes(v int64) *UsageLogUpdateOne {
+	_u.mutation.AddRequestBodyBytes(v)
+	return _u
+}
+
 // SetUserAgent sets the "user_agent" field.
 func (_u *UsageLogUpdateOne) SetUserAgent(v string) *UsageLogUpdateOne {
 	_u.mutation.SetUserAgent(v)
@@ -2537,6 +2585,12 @@ func (_u *UsageLogUpdateOne) sqlSave(ctx context.Context) (_node *UsageLog, err 
 	}
 	if _u.mutation.FirstTokenMsCleared() {
 		_spec.ClearField(usagelog.FieldFirstTokenMs, field.TypeInt)
+	}
+	if value, ok := _u.mutation.RequestBodyBytes(); ok {
+		_spec.SetField(usagelog.FieldRequestBodyBytes, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedRequestBodyBytes(); ok {
+		_spec.AddField(usagelog.FieldRequestBodyBytes, field.TypeInt64, value)
 	}
 	if value, ok := _u.mutation.UserAgent(); ok {
 		_spec.SetField(usagelog.FieldUserAgent, field.TypeString, value)

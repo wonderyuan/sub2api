@@ -1592,6 +1592,17 @@ export interface UserUsageTrendPoint {
   actual_cost: number // 实际扣除
 }
 
+export interface UserRequestBodyTrendPoint {
+  date: string
+  user_id: number
+  email: string
+  username: string
+  requests: number
+  total_request_body_bytes: number
+  avg_request_body_bytes: number
+  max_request_body_bytes: number
+}
+
 export interface UserSpendingRankingItem {
   user_id: number
   email: string

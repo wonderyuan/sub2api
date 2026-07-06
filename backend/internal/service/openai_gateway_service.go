@@ -6256,6 +6256,7 @@ type OpenAIRecordUsageInput struct {
 	UpstreamEndpoint   string
 	UserAgent          string // 请求的 User-Agent
 	IPAddress          string // 请求的客户端 IP 地址
+	RequestBodyBytes   int64  // 入站请求体大小（字节）
 	RequestPayloadHash string
 	APIKeyService      APIKeyQuotaUpdater
 	QuotaPlatform      string // user×platform quota platform resolved by the handler before async billing.
@@ -6453,6 +6454,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		ReasoningEffort:     result.ReasoningEffort,
 		InboundEndpoint:     optionalTrimmedStringPtr(input.InboundEndpoint),
 		UpstreamEndpoint:    optionalTrimmedStringPtr(input.UpstreamEndpoint),
+		RequestBodyBytes:    input.RequestBodyBytes,
 		InputTokens:         actualInputTokens,
 		OutputTokens:        result.Usage.OutputTokens,
 		CacheCreationTokens: result.Usage.CacheCreationInputTokens,

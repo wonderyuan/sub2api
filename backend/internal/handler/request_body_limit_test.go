@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -42,4 +43,71 @@ func TestRequestBodyLimitTooLarge(t *testing.T) {
 
 	require.Equal(t, http.StatusRequestEntityTooLarge, recorder.Code)
 	require.Contains(t, recorder.Body.String(), buildBodyTooLargeMessage(limit))
+}
+
+func TestRejectIfAccountRequestBodyTooLarge(t *testing.T) {
+	tests := []struct {
+		name       string
+		account    *service.Account
+		bodyBytes  int64
+		wantReject bool
+	}{
+		{
+			name:      "nil account does not reject",
+			account:   nil,
+			bodyBytes: 11,
+		},
+		{
+			name:      "zero limit is unlimited",
+			account:   &service.Account{Extra: map[string]any{service.RequestBodyLimitExtraKey: int64(0)}},
+			bodyBytes: 11,
+		},
+		{
+			name:      "equal to limit is accepted",
+			account:   &service.Account{Extra: map[string]any{service.RequestBodyLimitExtraKey: int64(10)}},
+			bodyBytes: 10,
+		},
+		{
+			name:       "above limit is rejected",
+			account:    &service.Account{Extra: map[string]any{service.RequestBodyLimitExtraKey: int64(10)}},
+			bodyBytes:  11,
+			wantReject: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			called := false
+			rejected := rejectIfAccountRequestBodyTooLarge(nil, tt.account, tt.bodyBytes, func(status int, code string, message string) {
+				called = true
+				require.Equal(t, http.StatusRequestEntityTooLarge, status)
+				require.Equal(t, "request_body_too_large", code)
+				require.Contains(t, message, "11 bytes")
+				require.Contains(t, message, "10 bytes")
+			})
+
+			require.Equal(t, tt.wantReject, rejected)
+			require.Equal(t, tt.wantReject, called)
+		})
+	}
+}
+
+func TestRejectIfAccountRequestBodyTooLargeReleasesAcquiredSelection(t *testing.T) {
+	released := 0
+	selection := &service.AccountSelectionResult{
+		Acquired: true,
+		ReleaseFunc: func() {
+			released++
+		},
+	}
+	account := &service.Account{
+		Extra: map[string]any{service.RequestBodyLimitExtraKey: int64(10)},
+	}
+
+	rejected := rejectIfAccountRequestBodyTooLarge(nil, account, 11, func(_ int, _ string, _ string) {
+		releaseAcquiredAccountSelection(selection)
+	})
+
+	require.True(t, rejected)
+	require.Equal(t, 1, released)
 }

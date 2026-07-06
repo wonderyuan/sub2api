@@ -2535,6 +2535,10 @@ func (r *stubUsageLogRepo) GetUserUsageTrend(ctx context.Context, startTime, end
 	return nil, errors.New("not implemented")
 }
 
+func (r *stubUsageLogRepo) GetUserRequestBodyTrend(ctx context.Context, startTime, endTime time.Time, granularity string, limit int) ([]usagestats.UserRequestBodyTrendPoint, error) {
+	return nil, errors.New("not implemented")
+}
+
 func (r *stubUsageLogRepo) GetUserSpendingRanking(ctx context.Context, startTime, endTime time.Time, limit int) (*usagestats.UserSpendingRankingResponse, error) {
 	return nil, errors.New("not implemented")
 }

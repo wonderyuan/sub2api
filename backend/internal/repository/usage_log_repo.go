@@ -30,7 +30,7 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-const usageLogSelectColumns = "id, user_id, api_key_id, account_id, request_id, model, requested_model, upstream_model, group_id, subscription_id, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, cache_creation_5m_tokens, cache_creation_1h_tokens, image_output_tokens, image_output_cost, input_cost, output_cost, cache_creation_cost, cache_read_cost, total_cost, actual_cost, rate_multiplier, account_rate_multiplier, billing_type, request_type, stream, openai_ws_mode, duration_ms, first_token_ms, user_agent, ip_address, image_count, image_size, image_input_size, image_output_size, image_size_source, image_size_breakdown, service_tier, reasoning_effort, inbound_endpoint, upstream_endpoint, cache_ttl_overridden, channel_id, model_mapping_chain, billing_tier, billing_mode, account_stats_cost, created_at"
+const usageLogSelectColumns = "id, user_id, api_key_id, account_id, request_id, model, requested_model, upstream_model, group_id, subscription_id, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, cache_creation_5m_tokens, cache_creation_1h_tokens, image_output_tokens, image_output_cost, input_cost, output_cost, cache_creation_cost, cache_read_cost, total_cost, actual_cost, rate_multiplier, account_rate_multiplier, billing_type, request_type, stream, openai_ws_mode, duration_ms, first_token_ms, request_body_bytes, user_agent, ip_address, image_count, image_size, image_input_size, image_output_size, image_size_source, image_size_breakdown, service_tier, reasoning_effort, inbound_endpoint, upstream_endpoint, cache_ttl_overridden, channel_id, model_mapping_chain, billing_tier, billing_mode, account_stats_cost, created_at"
 
 // usageLogInsertArgTypes must stay in the same order as:
 //  1. prepareUsageLogInsert().args
@@ -71,6 +71,7 @@ var usageLogInsertArgTypes = [...]string{
 	"boolean",     // openai_ws_mode
 	"integer",     // duration_ms
 	"integer",     // first_token_ms
+	"bigint",      // request_body_bytes
 	"text",        // user_agent
 	"text",        // ip_address
 	"integer",     // image_count
@@ -431,6 +432,7 @@ func (r *usageLogRepository) createSingle(ctx context.Context, sqlq sqlExecutor,
 			openai_ws_mode,
 			duration_ms,
 			first_token_ms,
+			request_body_bytes,
 			user_agent,
 			ip_address,
 			image_count,
@@ -456,7 +458,7 @@ func (r *usageLogRepository) createSingle(ctx context.Context, sqlq sqlExecutor,
 			$10, $11, $12, $13,
 			$14, $15, $16, $17,
 			$18, $19, $20, $21, $22, $23,
-			$24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50
+			$24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51
 		)
 		ON CONFLICT (request_id, api_key_id) DO NOTHING
 		RETURNING id, created_at
@@ -879,6 +881,7 @@ func buildUsageLogBatchInsertQuery(keys []string, preparedByKey map[string]usage
 			openai_ws_mode,
 			duration_ms,
 			first_token_ms,
+			request_body_bytes,
 			user_agent,
 			ip_address,
 			image_count,
@@ -900,7 +903,7 @@ func buildUsageLogBatchInsertQuery(keys []string, preparedByKey map[string]usage
 			created_at
 		) AS (VALUES `)
 
-	args := make([]any, 0, len(keys)*50)
+	args := make([]any, 0, len(keys)*(len(usageLogInsertArgTypes)+1))
 	argPos := 1
 	for idx, key := range keys {
 		if idx > 0 {
@@ -960,6 +963,7 @@ func buildUsageLogBatchInsertQuery(keys []string, preparedByKey map[string]usage
 				openai_ws_mode,
 				duration_ms,
 				first_token_ms,
+				request_body_bytes,
 				user_agent,
 				ip_address,
 				image_count,
@@ -1012,6 +1016,7 @@ func buildUsageLogBatchInsertQuery(keys []string, preparedByKey map[string]usage
 				openai_ws_mode,
 				duration_ms,
 				first_token_ms,
+				request_body_bytes,
 				user_agent,
 				ip_address,
 				image_count,
@@ -1104,6 +1109,7 @@ func buildUsageLogBestEffortInsertQuery(preparedList []usageLogInsertPrepared) (
 			openai_ws_mode,
 			duration_ms,
 			first_token_ms,
+			request_body_bytes,
 			user_agent,
 			ip_address,
 			image_count,
@@ -1125,7 +1131,7 @@ func buildUsageLogBestEffortInsertQuery(preparedList []usageLogInsertPrepared) (
 			created_at
 		) AS (VALUES `)
 
-	args := make([]any, 0, len(preparedList)*50)
+	args := make([]any, 0, len(preparedList)*len(usageLogInsertArgTypes))
 	argPos := 1
 	for idx, prepared := range preparedList {
 		if idx > 0 {
@@ -1182,6 +1188,7 @@ func buildUsageLogBestEffortInsertQuery(preparedList []usageLogInsertPrepared) (
 			openai_ws_mode,
 			duration_ms,
 			first_token_ms,
+			request_body_bytes,
 			user_agent,
 			ip_address,
 			image_count,
@@ -1234,6 +1241,7 @@ func buildUsageLogBestEffortInsertQuery(preparedList []usageLogInsertPrepared) (
 			openai_ws_mode,
 			duration_ms,
 			first_token_ms,
+			request_body_bytes,
 			user_agent,
 			ip_address,
 			image_count,
@@ -1294,6 +1302,7 @@ func execUsageLogInsertNoResult(ctx context.Context, sqlq sqlExecutor, prepared 
 			openai_ws_mode,
 			duration_ms,
 			first_token_ms,
+			request_body_bytes,
 			user_agent,
 			ip_address,
 			image_count,
@@ -1319,7 +1328,7 @@ func execUsageLogInsertNoResult(ctx context.Context, sqlq sqlExecutor, prepared 
 			$10, $11, $12, $13,
 			$14, $15, $16, $17,
 			$18, $19, $20, $21, $22, $23,
-			$24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50
+			$24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51
 		)
 		ON CONFLICT (request_id, api_key_id) DO NOTHING
 	`, prepared.args...)
@@ -1406,6 +1415,7 @@ func prepareUsageLogInsert(log *service.UsageLog) usageLogInsertPrepared {
 			log.OpenAIWSMode,
 			duration,
 			firstToken,
+			log.RequestBodyBytes,
 			userAgent,
 			ipAddress,
 			log.ImageCount,
@@ -2294,6 +2304,9 @@ type ModelStat = usagestats.ModelStat
 // UserUsageTrendPoint represents user usage trend data point
 type UserUsageTrendPoint = usagestats.UserUsageTrendPoint
 
+// UserRequestBodyTrendPoint represents request body size trend data grouped by user and date.
+type UserRequestBodyTrendPoint = usagestats.UserRequestBodyTrendPoint
+
 // UserSpendingRankingItem represents a user spending ranking row.
 type UserSpendingRankingItem = usagestats.UserSpendingRankingItem
 type UserSpendingRankingResponse = usagestats.UserSpendingRankingResponse
@@ -2403,6 +2416,78 @@ func (r *usageLogRepository) GetUserUsageTrend(ctx context.Context, startTime, e
 	for rows.Next() {
 		var row UserUsageTrendPoint
 		if err = rows.Scan(&row.Date, &row.UserID, &row.Email, &row.Username, &row.Requests, &row.Tokens, &row.Cost, &row.ActualCost); err != nil {
+			return nil, err
+		}
+		results = append(results, row)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return results, nil
+}
+
+// GetUserRequestBodyTrend returns request body size trend data grouped by user and date.
+func (r *usageLogRepository) GetUserRequestBodyTrend(ctx context.Context, startTime, endTime time.Time, granularity string, limit int) (results []UserRequestBodyTrendPoint, err error) {
+	if limit <= 0 {
+		limit = 12
+	}
+	dateFormat := safeDateFormat(granularity)
+
+	query := fmt.Sprintf(`
+		WITH top_users AS (
+			SELECT user_id
+			FROM usage_logs
+			WHERE created_at >= $1
+			  AND created_at < $2
+			  AND request_body_bytes > 0
+			GROUP BY user_id
+			ORDER BY SUM(request_body_bytes) DESC
+			LIMIT $3
+		)
+		SELECT
+			TO_CHAR(u.created_at, '%s') as date,
+			u.user_id,
+			COALESCE(us.email, '') as email,
+			COALESCE(us.username, '') as username,
+			COUNT(*) as requests,
+			COALESCE(SUM(u.request_body_bytes), 0) as total_request_body_bytes,
+			COALESCE(AVG(u.request_body_bytes), 0) as avg_request_body_bytes,
+			COALESCE(MAX(u.request_body_bytes), 0) as max_request_body_bytes
+		FROM usage_logs u
+		LEFT JOIN users us ON u.user_id = us.id
+		WHERE u.user_id IN (SELECT user_id FROM top_users)
+		  AND u.created_at >= $4
+		  AND u.created_at < $5
+		  AND u.request_body_bytes > 0
+		GROUP BY date, u.user_id, us.email, us.username
+		ORDER BY date ASC, total_request_body_bytes DESC
+	`, dateFormat)
+
+	rows, err := r.sql.QueryContext(ctx, query, startTime, endTime, limit, startTime, endTime)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = closeErr
+			results = nil
+		}
+	}()
+
+	results = make([]UserRequestBodyTrendPoint, 0)
+	for rows.Next() {
+		var row UserRequestBodyTrendPoint
+		if err = rows.Scan(
+			&row.Date,
+			&row.UserID,
+			&row.Email,
+			&row.Username,
+			&row.Requests,
+			&row.TotalRequestBodyBytes,
+			&row.AvgRequestBodyBytes,
+			&row.MaxRequestBodyBytes,
+		); err != nil {
 			return nil, err
 		}
 		results = append(results, row)
@@ -4344,6 +4429,7 @@ func scanUsageLog(scanner interface{ Scan(...any) error }) (*service.UsageLog, e
 		openaiWSMode          bool
 		durationMs            sql.NullInt64
 		firstTokenMs          sql.NullInt64
+		requestBodyBytes      int64
 		userAgent             sql.NullString
 		ipAddress             sql.NullString
 		imageCount            int
@@ -4398,6 +4484,7 @@ func scanUsageLog(scanner interface{ Scan(...any) error }) (*service.UsageLog, e
 		&openaiWSMode,
 		&durationMs,
 		&firstTokenMs,
+		&requestBodyBytes,
 		&userAgent,
 		&ipAddress,
 		&imageCount,
@@ -4446,6 +4533,7 @@ func scanUsageLog(scanner interface{ Scan(...any) error }) (*service.UsageLog, e
 		AccountRateMultiplier: nullFloat64Ptr(accountRateMultiplier),
 		BillingType:           int8(billingType),
 		RequestType:           service.RequestTypeFromInt16(requestTypeRaw),
+		RequestBodyBytes:      requestBodyBytes,
 		ImageCount:            imageCount,
 		CacheTTLOverridden:    cacheTTLOverridden,
 		CreatedAt:             createdAt,

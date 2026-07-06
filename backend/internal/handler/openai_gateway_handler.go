@@ -199,6 +199,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Request body is empty")
 		return
 	}
+	requestBodyBytes := int64(len(body))
 
 	setOpsRequestContext(c, "", false)
 	sessionHashBody := body
@@ -402,6 +403,12 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		sessionHash = ensureOpenAIPoolModeSessionHash(sessionHash, account)
 		reqLog.Debug("openai.account_selected", zap.Int64("account_id", account.ID), zap.String("account_name", account.Name))
 		setOpsSelectedAccount(c, account.ID, account.Platform)
+		if rejectIfAccountRequestBodyTooLarge(reqLog, account, requestBodyBytes, func(status int, code string, message string) {
+			releaseAcquiredAccountSelection(selection)
+			h.handleStreamingAwareError(c, status, code, message, streamStarted)
+		}) {
+			return
+		}
 
 		accountReleaseFunc, acquired := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, reqStream, &streamStarted, reqLog)
 		if !acquired {
@@ -540,6 +547,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 				UpstreamEndpoint:   upstreamEndpoint,
 				UserAgent:          userAgent,
 				IPAddress:          clientIP,
+				RequestBodyBytes:   requestBodyBytes,
 				RequestPayloadHash: requestPayloadHash,
 				APIKeyService:      h.apiKeyService,
 				QuotaPlatform:      quotaPlatform,
@@ -695,6 +703,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		h.anthropicErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "Request body is empty")
 		return
 	}
+	requestBodyBytes := int64(len(body))
 
 	if !gjson.ValidBytes(body) {
 		h.anthropicErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
@@ -823,6 +832,12 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		reqLog.Debug("openai_messages.account_selected", zap.Int64("account_id", account.ID), zap.String("account_name", account.Name))
 		_ = scheduleDecision
 		setOpsSelectedAccount(c, account.ID, account.Platform)
+		if rejectIfAccountRequestBodyTooLarge(reqLog, account, requestBodyBytes, func(status int, code string, message string) {
+			releaseAcquiredAccountSelection(selection)
+			h.anthropicStreamingAwareError(c, status, code, message, streamStarted)
+		}) {
+			return
+		}
 
 		accountReleaseFunc, acquired := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, reqStream, &streamStarted, reqLog)
 		if !acquired {
@@ -955,6 +970,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 				UpstreamEndpoint:   upstreamEndpoint,
 				UserAgent:          userAgent,
 				IPAddress:          clientIP,
+				RequestBodyBytes:   requestBodyBytes,
 				RequestPayloadHash: requestPayloadHash,
 				APIKeyService:      h.apiKeyService,
 				QuotaPlatform:      quotaPlatform,

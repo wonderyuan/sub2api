@@ -59,6 +59,7 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Request body is empty")
 		return
 	}
+	requestBodyBytes := int64(len(body))
 	if !gjson.ValidBytes(body) {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
 		return
@@ -149,6 +150,12 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 		}
 		account := selection.Account
 		setOpsSelectedAccount(c, account.ID, account.Platform)
+		if rejectIfAccountRequestBodyTooLarge(reqLog, account, requestBodyBytes, func(status int, code string, message string) {
+			releaseAcquiredAccountSelection(selection)
+			h.errorResponse(c, status, code, message)
+		}) {
+			return
+		}
 
 		accountReleaseFunc, accountAcquired := h.acquireResponsesAccountSlot(c, apiKey.GroupID, "", selection, false, &streamStarted, reqLog)
 		if !accountAcquired {
@@ -233,6 +240,7 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 				UpstreamEndpoint:   upstreamEndpoint,
 				UserAgent:          userAgent,
 				IPAddress:          clientIP,
+				RequestBodyBytes:   requestBodyBytes,
 				APIKeyService:      h.apiKeyService,
 				QuotaPlatform:      quotaPlatform,
 				ChannelUsageFields: channelMapping.ToUsageFields(reqModel, result.UpstreamModel),

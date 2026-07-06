@@ -2457,6 +2457,25 @@ func (a *Account) GetBaseRPM() int {
 	return 0
 }
 
+// RequestBodyLimitExtraKey stores the per-account maximum accepted request body size in bytes.
+// A missing, zero, or negative value means unlimited.
+const RequestBodyLimitExtraKey = "request_body_limit_bytes"
+
+// GetRequestBodyLimitBytes returns the account-level request body limit in bytes.
+// It accepts JSON numbers or numeric strings from Account.Extra.
+func (a *Account) GetRequestBodyLimitBytes() int64 {
+	if a == nil || a.Extra == nil {
+		return 0
+	}
+	if v, ok := a.Extra[RequestBodyLimitExtraKey]; ok {
+		limit := int64(parseExtraFloat64(v))
+		if limit > 0 {
+			return limit
+		}
+	}
+	return 0
+}
+
 // GetRPMStrategy 获取 RPM 策略
 // "tiered" = 三区模型（默认）, "sticky_exempt" = 粘性豁免
 func (a *Account) GetRPMStrategy() string {

@@ -62,6 +62,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Request body is empty")
 		return
 	}
+	requestBodyBytes := int64(len(body))
 
 	if !gjson.ValidBytes(body) {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
@@ -182,6 +183,12 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		reqLog.Debug("openai_chat_completions.account_selected", zap.Int64("account_id", account.ID), zap.String("account_name", account.Name))
 		_ = scheduleDecision
 		setOpsSelectedAccount(c, account.ID, account.Platform)
+		if rejectIfAccountRequestBodyTooLarge(reqLog, account, requestBodyBytes, func(status int, code string, message string) {
+			releaseAcquiredAccountSelection(selection)
+			h.handleStreamingAwareError(c, status, code, message, streamStarted)
+		}) {
+			return
+		}
 
 		accountReleaseFunc, acquired := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, reqStream, &streamStarted, reqLog)
 		if !acquired {
@@ -313,6 +320,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 				UpstreamEndpoint:   upstreamEndpoint,
 				UserAgent:          userAgent,
 				IPAddress:          clientIP,
+				RequestBodyBytes:   requestBodyBytes,
 				APIKeyService:      h.apiKeyService,
 				QuotaPlatform:      quotaPlatform,
 				ChannelUsageFields: channelMapping.ToUsageFields(reqModel, result.UpstreamModel),

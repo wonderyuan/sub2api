@@ -183,6 +183,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		googleError(c, http.StatusBadRequest, "Request body is empty")
 		return
 	}
+	requestBodyBytes := int64(len(body))
 
 	setOpsRequestContext(c, modelName, stream)
 	setOpsEndpointContext(c, "", int16(service.RequestTypeFromLegacy(stream, false)))
@@ -376,6 +377,14 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		}
 		account := selection.Account
 		setOpsSelectedAccount(c, account.ID, account.Platform)
+		if rejectIfAccountRequestBodyTooLarge(reqLog, account, requestBodyBytes, func(status int, _ string, message string) {
+			if selection.Acquired && selection.ReleaseFunc != nil {
+				selection.ReleaseFunc()
+			}
+			googleError(c, status, message)
+		}) {
+			return
+		}
 
 		// 检测账号切换：如果粘性会话绑定的账号与当前选择的账号不同，清除 thoughtSignature
 		// 注意：Gemini 原生 API 的 thoughtSignature 与具体上游账号强相关；跨账号透传会导致 400。
@@ -536,6 +545,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 				UpstreamEndpoint:      upstreamEndpoint,
 				UserAgent:             userAgent,
 				IPAddress:             clientIP,
+				RequestBodyBytes:      requestBodyBytes,
 				RequestPayloadHash:    requestPayloadHash,
 				LongContextThreshold:  200000, // Gemini 200K 阈值
 				LongContextMultiplier: 2.0,    // 超出部分双倍计费

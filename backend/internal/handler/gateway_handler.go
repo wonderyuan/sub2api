@@ -152,6 +152,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Request body is empty")
 		return
 	}
+	requestBodyBytes := int64(len(body))
 
 	setOpsRequestContext(c, "", false)
 
@@ -339,6 +340,14 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			}
 			account := selection.Account
 			setOpsSelectedAccount(c, account.ID, account.Platform)
+			if rejectIfAccountRequestBodyTooLarge(reqLog, account, requestBodyBytes, func(status int, code string, message string) {
+				if selection.Acquired && selection.ReleaseFunc != nil {
+					selection.ReleaseFunc()
+				}
+				h.handleStreamingAwareError(c, status, code, message, streamStarted)
+			}) {
+				return
+			}
 
 			// 检查请求拦截（预热请求、SUGGESTION MODE等）
 			if account.IsInterceptWarmupEnabled() {
@@ -532,6 +541,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 					UpstreamEndpoint:   upstreamEndpoint,
 					UserAgent:          userAgent,
 					IPAddress:          clientIP,
+					RequestBodyBytes:   requestBodyBytes,
 					RequestPayloadHash: requestPayloadHash,
 					ForceCacheBilling:  forceCacheBilling,
 					APIKeyService:      h.apiKeyService,
@@ -625,6 +635,14 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			}
 			account := selection.Account
 			setOpsSelectedAccount(c, account.ID, account.Platform)
+			if rejectIfAccountRequestBodyTooLarge(reqLog, account, requestBodyBytes, func(status int, code string, message string) {
+				if selection.Acquired && selection.ReleaseFunc != nil {
+					selection.ReleaseFunc()
+				}
+				h.handleStreamingAwareError(c, status, code, message, streamStarted)
+			}) {
+				return
+			}
 
 			// [DEBUG-STICKY] 打印账号选择结果
 			reqLog.Info("sticky.account_selected",
@@ -962,6 +980,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 					UpstreamEndpoint:   upstreamEndpoint,
 					UserAgent:          userAgent,
 					IPAddress:          clientIP,
+					RequestBodyBytes:   requestBodyBytes,
 					RequestPayloadHash: requestPayloadHash,
 					ForceCacheBilling:  forceCacheBilling,
 					APIKeyService:      h.apiKeyService,
