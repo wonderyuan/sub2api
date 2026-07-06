@@ -636,6 +636,7 @@ export interface UpdateApiKeyRequest {
   rate_limit_1d?: number
   rate_limit_7d?: number
   reset_rate_limit_usage?: boolean
+  sync_7d_window_account_id?: number
 }
 
 export interface CreateGroupRequest {

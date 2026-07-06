@@ -57,10 +57,11 @@ type UpdateAPIKeyRequest struct {
 	ResetQuota  *bool    `json:"reset_quota"`  // 重置已用配额
 
 	// Rate limit fields (nil = no change, 0 = unlimited)
-	RateLimit5h         *float64 `json:"rate_limit_5h"`
-	RateLimit1d         *float64 `json:"rate_limit_1d"`
-	RateLimit7d         *float64 `json:"rate_limit_7d"`
-	ResetRateLimitUsage *bool    `json:"reset_rate_limit_usage"` // 重置限速用量
+	RateLimit5h           *float64 `json:"rate_limit_5h"`
+	RateLimit1d           *float64 `json:"rate_limit_1d"`
+	RateLimit7d           *float64 `json:"rate_limit_7d"`
+	ResetRateLimitUsage   *bool    `json:"reset_rate_limit_usage"`    // 重置限速用量
+	Sync7dWindowAccountID *int64   `json:"sync_7d_window_account_id"` // 同步指定账号的 7 天刷新窗口
 }
 
 // List handles listing user's API keys with pagination
@@ -239,14 +240,15 @@ func (h *APIKeyHandler) Update(c *gin.Context) {
 	}
 
 	svcReq := service.UpdateAPIKeyRequest{
-		IPWhitelist:         req.IPWhitelist,
-		IPBlacklist:         req.IPBlacklist,
-		Quota:               req.Quota,
-		ResetQuota:          req.ResetQuota,
-		RateLimit5h:         req.RateLimit5h,
-		RateLimit1d:         req.RateLimit1d,
-		RateLimit7d:         req.RateLimit7d,
-		ResetRateLimitUsage: req.ResetRateLimitUsage,
+		IPWhitelist:           req.IPWhitelist,
+		IPBlacklist:           req.IPBlacklist,
+		Quota:                 req.Quota,
+		ResetQuota:            req.ResetQuota,
+		RateLimit5h:           req.RateLimit5h,
+		RateLimit1d:           req.RateLimit1d,
+		RateLimit7d:           req.RateLimit7d,
+		ResetRateLimitUsage:   req.ResetRateLimitUsage,
+		Sync7dWindowAccountID: req.Sync7dWindowAccountID,
 	}
 	if req.Name != "" {
 		svcReq.Name = &req.Name

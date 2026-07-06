@@ -855,6 +855,34 @@
               </div>
             </div>
 
+            <!-- 7-Day Window Alignment (edit mode only) -->
+            <div v-if="showEditModal && isAdmin" class="rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-dark-600 dark:bg-dark-700/50">
+              <label class="input-label">{{ t('keys.sync7dWindowAccount') }}</label>
+              <select
+                v-model="formData.sync_7d_window_account_id"
+                class="input"
+                :disabled="upstreamAccountsLoading"
+              >
+                <option value="">{{ t('keys.sync7dWindowAccountNone') }}</option>
+                <option
+                  v-for="account in sync7dAccountOptions"
+                  :key="account.id"
+                  :value="String(account.id)"
+                >
+                  {{ account.label }}
+                </option>
+              </select>
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                {{ t('keys.sync7dWindowAccountHint') }}
+              </p>
+              <p v-if="selectedSync7dAccountResetAt" class="mt-1 text-xs text-emerald-600 dark:text-emerald-400">
+                {{ t('keys.sync7dWindowAccountSelected', { time: formatDateTime(selectedSync7dAccountResetAt) }) }}
+              </p>
+              <p v-else-if="!upstreamAccountsLoading && sync7dAccountOptions.length === 0" class="mt-1 text-xs text-amber-600 dark:text-amber-400">
+                {{ t('keys.sync7dWindowAccountEmpty') }}
+              </p>
+            </div>
+
             <!-- Reset Rate Limit button (edit mode only) -->
             <div v-if="showEditModal && selectedKey && (selectedKey.rate_limit_5h > 0 || selectedKey.rate_limit_1d > 0 || selectedKey.rate_limit_7d > 0)">
               <button
@@ -1177,7 +1205,7 @@ import UseKeyModal from '@/components/keys/UseKeyModal.vue'
 import EndpointPopover from '@/components/keys/EndpointPopover.vue'
 import GroupBadge from '@/components/common/GroupBadge.vue'
 import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
-import type { AdminUser, ApiKey, Group, PublicSettings, SubscriptionType, GroupPlatform, UpdateApiKeyRequest } from '@/types'
+import type { Account, AdminUser, ApiKey, Group, PublicSettings, SubscriptionType, GroupPlatform, UpdateApiKeyRequest } from '@/types'
 import type { Column } from '@/components/common/types'
 import type { BatchApiKeyUsageStats } from '@/api/usage'
 import { formatDateTime } from '@/utils/format'
@@ -1304,8 +1332,10 @@ const columns = computed<Column[]>(() =>
 const apiKeys = ref<ApiKey[]>([])
 const groups = ref<Group[]>([])
 const users = ref<AdminUser[]>([])
+const upstreamAccounts = ref<Account[]>([])
 const loading = ref(false)
 const usersLoading = ref(false)
+const upstreamAccountsLoading = ref(false)
 const submitting = ref(false)
 const now = ref(new Date())
 let resetTimer: ReturnType<typeof setInterval> | null = null
@@ -1346,6 +1376,7 @@ const columnDropdownRef = ref<HTMLElement | null>(null)
 const dropdownPosition = ref<{ top?: number; bottom?: number; left: number } | null>(null)
 const groupButtonRefs = ref<Map<number, HTMLElement>>(new Map())
 let abortController: AbortController | null = null
+let upstreamAccountsLoadPromise: Promise<void> | null = null
 
 // Get the currently selected key for group change
 const selectedKeyForGroup = computed(() => {
@@ -1379,6 +1410,7 @@ const formData = ref({
   rate_limit_5h: null as number | null,
   rate_limit_1d: null as number | null,
   rate_limit_7d: null as number | null,
+  sync_7d_window_account_id: '',
   enable_expiration: false,
   expiration_preset: '30' as '7' | '30' | '90' | 'custom',
   expiration_date: ''
@@ -1479,6 +1511,56 @@ const filteredGroupOptions = computed(() => {
     return opt.label.toLowerCase().includes(query) ||
       (opt.description && opt.description.toLowerCase().includes(query))
   })
+})
+
+const parseResetAtValue = (value: unknown): string | null => {
+  if (typeof value === 'string' && value.trim()) {
+    const date = new Date(value)
+    return Number.isNaN(date.getTime()) ? null : date.toISOString()
+  }
+  if (typeof value === 'number' && value > 0) {
+    return new Date(value * 1000).toISOString()
+  }
+  return null
+}
+
+const getAccount7dResetAt = (account: Account): string | null => {
+  const extra = account.extra || {}
+  const candidates = [
+    parseResetAtValue(extra.codex_7d_reset_at),
+    parseResetAtValue(extra.passive_usage_7d_reset),
+    parseResetAtValue(extra.quota_weekly_reset_at)
+  ]
+  const nowMs = Date.now()
+  return candidates.find((value) => value !== null && new Date(value).getTime() > nowMs) || null
+}
+
+const getAccount7dResetSource = (account: Account, resetAt: string | null) => {
+  const extra = account.extra || {}
+  if (resetAt === parseResetAtValue(extra.codex_7d_reset_at)) return t('keys.sync7dWindowSourceCodex')
+  if (resetAt === parseResetAtValue(extra.passive_usage_7d_reset)) return t('keys.sync7dWindowSourcePassive')
+  if (resetAt === parseResetAtValue(extra.quota_weekly_reset_at)) return t('keys.sync7dWindowSourceWeeklyQuota')
+  return t('common.unknown')
+}
+
+const sync7dAccountOptions = computed(() =>
+  upstreamAccounts.value
+    .map((account) => {
+      const resetAt = getAccount7dResetAt(account)
+      const source = getAccount7dResetSource(account, resetAt)
+      return {
+        id: account.id,
+        label: `#${account.id} ${account.name} · ${account.platform}/${account.type} · ${source} · ${formatDateTime(resetAt || '')}`,
+        resetAt
+      }
+    })
+    .filter((account) => account.resetAt !== null)
+)
+
+const selectedSync7dAccountResetAt = computed(() => {
+  const id = Number(formData.value.sync_7d_window_account_id)
+  if (!id) return null
+  return sync7dAccountOptions.value.find((account) => account.id === id)?.resetAt || null
 })
 
 const copyToClipboard = async (text: string, keyId: number) => {
@@ -1584,6 +1666,38 @@ const loadUsers = async () => {
   }
 }
 
+const loadUpstreamAccounts = async () => {
+  if (!isAdmin.value || upstreamAccounts.value.length > 0) return
+  if (upstreamAccountsLoadPromise) return upstreamAccountsLoadPromise
+  upstreamAccountsLoading.value = true
+  upstreamAccountsLoadPromise = (async () => {
+    try {
+      const pageSize = 1000
+      let page = 1
+      let pages = 1
+      const items: Account[] = []
+      do {
+        const response = await adminAPI.accounts.list(page, pageSize, {
+          sort_by: 'name',
+          sort_order: 'asc',
+          lite: '1'
+        })
+        items.push(...response.items)
+        pages = response.pages || 1
+        page += 1
+      } while (page <= pages)
+      upstreamAccounts.value = items
+    } catch (error) {
+      console.error('Failed to load accounts:', error)
+      appStore.showError(t('keys.failedToLoadAccounts'))
+    } finally {
+      upstreamAccountsLoading.value = false
+      upstreamAccountsLoadPromise = null
+    }
+  })()
+  return upstreamAccountsLoadPromise
+}
+
 const openCreateModal = async () => {
   if (!isAdmin.value) return
   showCreateModal.value = true
@@ -1657,11 +1771,13 @@ const editKey = (key: ApiKey) => {
     rate_limit_5h: key.rate_limit_5h || null,
     rate_limit_1d: key.rate_limit_1d || null,
     rate_limit_7d: key.rate_limit_7d || null,
+    sync_7d_window_account_id: '',
     enable_expiration: hasExpiration,
     expiration_preset: 'custom',
     expiration_date: key.expires_at ? formatDateTimeLocal(key.expires_at) : ''
   }
   showEditModal.value = true
+  loadUpstreamAccounts()
 }
 
 const toggleKeyStatus = async (key: ApiKey) => {
@@ -1816,6 +1932,10 @@ const handleSubmit = async () => {
         rate_limit_1d: rateLimitData.rate_limit_1d,
         rate_limit_7d: rateLimitData.rate_limit_7d,
       }
+      const sync7dAccountId = Number(formData.value.sync_7d_window_account_id)
+      if (sync7dAccountId > 0) {
+        updates.sync_7d_window_account_id = sync7dAccountId
+      }
       if (shouldSubmitEditStatus(selectedKey.value, formData.value.status)) {
         updates.status = formData.value.status
       }
@@ -1892,6 +2012,7 @@ const closeModals = () => {
     rate_limit_5h: null,
     rate_limit_1d: null,
     rate_limit_7d: null,
+    sync_7d_window_account_id: '',
     enable_expiration: false,
     expiration_preset: '30',
     expiration_date: ''
