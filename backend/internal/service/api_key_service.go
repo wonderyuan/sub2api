@@ -22,13 +22,14 @@ import (
 )
 
 var (
-	ErrAPIKeyNotFound     = infraerrors.NotFound("API_KEY_NOT_FOUND", "api key not found")
-	ErrGroupNotAllowed    = infraerrors.Forbidden("GROUP_NOT_ALLOWED", "user is not allowed to bind this group")
-	ErrAPIKeyExists       = infraerrors.Conflict("API_KEY_EXISTS", "api key already exists")
-	ErrAPIKeyTooShort     = infraerrors.BadRequest("API_KEY_TOO_SHORT", "api key must be at least 16 characters")
-	ErrAPIKeyInvalidChars = infraerrors.BadRequest("API_KEY_INVALID_CHARS", "api key can only contain letters, numbers, underscores, and hyphens")
-	ErrAPIKeyRateLimited  = infraerrors.TooManyRequests("API_KEY_RATE_LIMITED", "too many failed attempts, please try again later")
-	ErrInvalidIPPattern   = infraerrors.BadRequest("INVALID_IP_PATTERN", "invalid IP or CIDR pattern")
+	ErrAPIKeyNotFound                = infraerrors.NotFound("API_KEY_NOT_FOUND", "api key not found")
+	ErrGroupNotAllowed               = infraerrors.Forbidden("GROUP_NOT_ALLOWED", "user is not allowed to bind this group")
+	ErrAPIKeyExists                  = infraerrors.Conflict("API_KEY_EXISTS", "api key already exists")
+	ErrAPIKeyTooShort                = infraerrors.BadRequest("API_KEY_TOO_SHORT", "api key must be at least 16 characters")
+	ErrAPIKeyInvalidChars            = infraerrors.BadRequest("API_KEY_INVALID_CHARS", "api key can only contain letters, numbers, underscores, and hyphens")
+	ErrAPIKeyRateLimited             = infraerrors.TooManyRequests("API_KEY_RATE_LIMITED", "too many failed attempts, please try again later")
+	ErrInvalidIPPattern              = infraerrors.BadRequest("INVALID_IP_PATTERN", "invalid IP or CIDR pattern")
+	ErrAPIKey7dWindowSyncUnavailable = infraerrors.BadRequest("API_KEY_7D_WINDOW_SYNC_UNAVAILABLE", "selected account does not have a known future 7-day reset time")
 	// ErrAPIKeyExpired        = infraerrors.Forbidden("API_KEY_EXPIRED", "api key has expired")
 	ErrAPIKeyExpired = infraerrors.Forbidden("API_KEY_EXPIRED", "api key 已过期")
 	// ErrAPIKeyQuotaExhausted = infraerrors.TooManyRequests("API_KEY_QUOTA_EXHAUSTED", "api key quota exhausted")
@@ -89,6 +90,10 @@ type APIKeyRepository interface {
 
 type apiKeyAllByUserIDLister interface {
 	ListAllByUserID(ctx context.Context, userID int64, filters APIKeyListFilters) ([]APIKey, error)
+}
+
+type APIKeyAccountRepository interface {
+	GetByID(ctx context.Context, id int64) (*Account, error)
 }
 
 // APIKeyRateLimitData holds rate limit usage and window state for an API key.
@@ -192,10 +197,11 @@ type UpdateAPIKeyRequest struct {
 	ResetQuota      *bool      `json:"reset_quota"` // Reset quota_used to 0
 
 	// Rate limit fields (nil = no change, 0 = unlimited)
-	RateLimit5h         *float64 `json:"rate_limit_5h"`
-	RateLimit1d         *float64 `json:"rate_limit_1d"`
-	RateLimit7d         *float64 `json:"rate_limit_7d"`
-	ResetRateLimitUsage *bool    `json:"reset_rate_limit_usage"` // Reset all usage counters to 0
+	RateLimit5h           *float64 `json:"rate_limit_5h"`
+	RateLimit1d           *float64 `json:"rate_limit_1d"`
+	RateLimit7d           *float64 `json:"rate_limit_7d"`
+	ResetRateLimitUsage   *bool    `json:"reset_rate_limit_usage"`    // Reset all usage counters to 0
+	Sync7dWindowAccountID *int64   `json:"sync_7d_window_account_id"` // Align 7d window to the selected upstream account
 }
 
 // APIKeyService API Key服务
@@ -206,6 +212,7 @@ type RateLimitCacheInvalidator interface {
 
 type APIKeyService struct {
 	apiKeyRepo            APIKeyRepository
+	accountRepo           APIKeyAccountRepository
 	userRepo              UserRepository
 	groupRepo             GroupRepository
 	userSubRepo           UserSubscriptionRepository
@@ -248,6 +255,10 @@ func NewAPIKeyService(
 // Called after construction (e.g. in wire) to avoid circular dependencies.
 func (s *APIKeyService) SetRateLimitCacheInvalidator(inv RateLimitCacheInvalidator) {
 	s.rateLimitCacheInvalid = inv
+}
+
+func (s *APIKeyService) SetAccountRepository(accountRepo APIKeyAccountRepository) {
+	s.accountRepo = accountRepo
 }
 
 func (s *APIKeyService) SetConcurrencyService(concurrencyService *ConcurrencyService) {
@@ -764,6 +775,26 @@ func (s *APIKeyService) updateAPIKey(ctx context.Context, id int64, userID int64
 		apiKey.Window1dStart = nil
 		apiKey.Window7dStart = nil
 	}
+	synced7dWindow := false
+	if req.Sync7dWindowAccountID != nil {
+		if !isAdmin {
+			return nil, ErrInsufficientPerms
+		}
+		if s.accountRepo == nil {
+			return nil, ErrAPIKey7dWindowSyncUnavailable
+		}
+		account, err := s.accountRepo.GetByID(ctx, *req.Sync7dWindowAccountID)
+		if err != nil {
+			return nil, fmt.Errorf("get sync account: %w", err)
+		}
+		resetAt, ok := accountSevenDayResetAt(account, time.Now())
+		if !ok {
+			return nil, ErrAPIKey7dWindowSyncUnavailable
+		}
+		windowStart := resetAt.Add(-RateLimitWindow7d)
+		apiKey.Window7dStart = &windowStart
+		synced7dWindow = true
+	}
 
 	if err := s.apiKeyRepo.Update(ctx, apiKey); err != nil {
 		return nil, fmt.Errorf("update api key: %w", err)
@@ -773,11 +804,39 @@ func (s *APIKeyService) updateAPIKey(ctx context.Context, id int64, userID int64
 	s.compileAPIKeyIPRules(apiKey)
 
 	// Invalidate Redis rate limit cache so reset takes effect immediately
-	if resetRateLimit && s.rateLimitCacheInvalid != nil {
+	if (resetRateLimit || synced7dWindow) && s.rateLimitCacheInvalid != nil {
 		_ = s.rateLimitCacheInvalid.InvalidateAPIKeyRateLimit(ctx, apiKey.ID)
 	}
 
 	return apiKey, nil
+}
+
+func accountSevenDayResetAt(account *Account, now time.Time) (time.Time, bool) {
+	if account == nil || account.Extra == nil {
+		return time.Time{}, false
+	}
+
+	// Prefer product usage windows over generic account quota windows when both
+	// are present; API key 7d rate limits are meant to mirror upstream usage.
+	candidates := []time.Time{
+		parseExtraTime(account.Extra["codex_7d_reset_at"]),
+		parseUnixSecondsTime(account.Extra["passive_usage_7d_reset"]),
+		parseExtraTime(account.Extra["quota_weekly_reset_at"]),
+	}
+	for _, resetAt := range candidates {
+		if !resetAt.IsZero() && resetAt.After(now) {
+			return resetAt, true
+		}
+	}
+	return time.Time{}, false
+}
+
+func parseUnixSecondsTime(value any) time.Time {
+	seconds := parseExtraFloat64(value)
+	if seconds <= 0 {
+		return time.Time{}
+	}
+	return time.Unix(int64(seconds), 0)
 }
 
 // Delete 删除API Key

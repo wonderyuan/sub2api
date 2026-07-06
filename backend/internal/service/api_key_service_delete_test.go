@@ -334,6 +334,159 @@ func (s *apiKeyCacheStub) SubscribeAuthCacheInvalidation(ctx context.Context, ha
 	return nil
 }
 
+type apiKeyAccountRepoStub struct {
+	account *Account
+	err     error
+}
+
+func (s *apiKeyAccountRepoStub) GetByID(ctx context.Context, id int64) (*Account, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	if s.account == nil || s.account.ID != id {
+		return nil, ErrAccountNotFound
+	}
+	clone := *s.account
+	return &clone, nil
+}
+
+type rateLimitInvalidatorStub struct {
+	ids []int64
+}
+
+func (s *rateLimitInvalidatorStub) InvalidateAPIKeyRateLimit(ctx context.Context, keyID int64) error {
+	s.ids = append(s.ids, keyID)
+	return nil
+}
+
+func TestAPIKeyService_Update_Sync7dWindowFromAccount(t *testing.T) {
+	resetAt := time.Now().Add(21*time.Hour + 30*time.Minute).UTC().Truncate(time.Second)
+	account := &Account{
+		ID:    101,
+		Extra: map[string]any{"codex_7d_reset_at": resetAt.Format(time.RFC3339)},
+	}
+	previousWindowStart := time.Now().Add(-2 * 24 * time.Hour)
+	repo := &apiKeyRepoStub{
+		apiKey: &APIKey{
+			ID:            42,
+			UserID:        7,
+			Key:           "sk-test",
+			Name:          "key",
+			Status:        StatusAPIKeyActive,
+			RateLimit7d:   100,
+			Usage7d:       12,
+			Window7dStart: &previousWindowStart,
+		},
+	}
+	invalidator := &rateLimitInvalidatorStub{}
+	svc := &APIKeyService{
+		apiKeyRepo:            repo,
+		accountRepo:           &apiKeyAccountRepoStub{account: account},
+		rateLimitCacheInvalid: invalidator,
+	}
+
+	updated, err := svc.UpdateAsAdmin(context.Background(), 42, 1, UpdateAPIKeyRequest{
+		Sync7dWindowAccountID: &account.ID,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, updated.Window7dStart)
+	require.Equal(t, resetAt.Add(-RateLimitWindow7d), updated.Window7dStart.UTC())
+	require.Equal(t, 12.0, updated.Usage7d, "syncing the window should not reset usage")
+	require.Len(t, repo.updatedKeys, 1)
+	require.Equal(t, []int64{42}, invalidator.ids)
+}
+
+func TestAPIKeyService_Update_Sync7dWindowRequiresAdmin(t *testing.T) {
+	accountID := int64(101)
+	repo := &apiKeyRepoStub{
+		apiKey: &APIKey{ID: 42, UserID: 7, Key: "sk-test", Status: StatusAPIKeyActive},
+	}
+	svc := &APIKeyService{
+		apiKeyRepo:  repo,
+		accountRepo: &apiKeyAccountRepoStub{account: &Account{ID: accountID}},
+	}
+
+	_, err := svc.Update(context.Background(), 42, 7, UpdateAPIKeyRequest{
+		Sync7dWindowAccountID: &accountID,
+	})
+	require.ErrorIs(t, err, ErrInsufficientPerms)
+	require.Empty(t, repo.updatedKeys)
+}
+
+func TestAPIKeyService_Update_Sync7dWindowUnavailable(t *testing.T) {
+	accountID := int64(101)
+	repo := &apiKeyRepoStub{
+		apiKey: &APIKey{ID: 42, UserID: 7, Key: "sk-test", Status: StatusAPIKeyActive},
+	}
+	svc := &APIKeyService{
+		apiKeyRepo: repo,
+		accountRepo: &apiKeyAccountRepoStub{account: &Account{
+			ID:    accountID,
+			Extra: map[string]any{"codex_7d_reset_at": time.Now().Add(-time.Hour).Format(time.RFC3339)},
+		}},
+	}
+
+	_, err := svc.UpdateAsAdmin(context.Background(), 42, 1, UpdateAPIKeyRequest{
+		Sync7dWindowAccountID: &accountID,
+	})
+	require.ErrorIs(t, err, ErrAPIKey7dWindowSyncUnavailable)
+	require.Empty(t, repo.updatedKeys)
+}
+
+func TestAPIKeyService_Update_Sync7dWindowMissingAccountRepo(t *testing.T) {
+	accountID := int64(101)
+	repo := &apiKeyRepoStub{
+		apiKey: &APIKey{ID: 42, UserID: 7, Key: "sk-test", Status: StatusAPIKeyActive},
+	}
+	svc := &APIKeyService{apiKeyRepo: repo}
+
+	_, err := svc.UpdateAsAdmin(context.Background(), 42, 1, UpdateAPIKeyRequest{
+		Sync7dWindowAccountID: &accountID,
+	})
+	require.ErrorIs(t, err, ErrAPIKey7dWindowSyncUnavailable)
+	require.Empty(t, repo.updatedKeys)
+}
+
+func TestAPIKeyService_Update_ResetUsageThenSyncs7dWindow(t *testing.T) {
+	resetAt := time.Now().Add(48 * time.Hour).UTC().Truncate(time.Second)
+	account := &Account{
+		ID:    101,
+		Extra: map[string]any{"passive_usage_7d_reset": resetAt.Unix()},
+	}
+	repo := &apiKeyRepoStub{
+		apiKey: &APIKey{
+			ID:          42,
+			UserID:      7,
+			Key:         "sk-test",
+			Status:      StatusAPIKeyActive,
+			RateLimit5h: 10,
+			RateLimit1d: 20,
+			RateLimit7d: 30,
+			Usage5h:     1,
+			Usage1d:     2,
+			Usage7d:     3,
+		},
+	}
+	resetUsage := true
+	svc := &APIKeyService{
+		apiKeyRepo:  repo,
+		accountRepo: &apiKeyAccountRepoStub{account: account},
+	}
+
+	updated, err := svc.UpdateAsAdmin(context.Background(), 42, 1, UpdateAPIKeyRequest{
+		ResetRateLimitUsage:   &resetUsage,
+		Sync7dWindowAccountID: &account.ID,
+	})
+	require.NoError(t, err)
+	require.Zero(t, updated.Usage5h)
+	require.Zero(t, updated.Usage1d)
+	require.Zero(t, updated.Usage7d)
+	require.Nil(t, updated.Window5hStart)
+	require.Nil(t, updated.Window1dStart)
+	require.NotNil(t, updated.Window7dStart)
+	require.Equal(t, resetAt.Add(-RateLimitWindow7d), updated.Window7dStart.UTC())
+}
+
 // TestApiKeyService_Delete_OwnerMismatch 测试非所有者尝试删除时返回权限错误。
 // 预期行为：
 //   - GetKeyAndOwnerID 返回所有者 ID 为 1
