@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"html"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,14 +22,13 @@ import (
 )
 
 var (
-	ErrAPIKeyNotFound                = infraerrors.NotFound("API_KEY_NOT_FOUND", "api key not found")
-	ErrGroupNotAllowed               = infraerrors.Forbidden("GROUP_NOT_ALLOWED", "user is not allowed to bind this group")
-	ErrAPIKeyExists                  = infraerrors.Conflict("API_KEY_EXISTS", "api key already exists")
-	ErrAPIKeyTooShort                = infraerrors.BadRequest("API_KEY_TOO_SHORT", "api key must be at least 16 characters")
-	ErrAPIKeyInvalidChars            = infraerrors.BadRequest("API_KEY_INVALID_CHARS", "api key can only contain letters, numbers, underscores, and hyphens")
-	ErrAPIKeyRateLimited             = infraerrors.TooManyRequests("API_KEY_RATE_LIMITED", "too many failed attempts, please try again later")
-	ErrInvalidIPPattern              = infraerrors.BadRequest("INVALID_IP_PATTERN", "invalid IP or CIDR pattern")
-	ErrAPIKey7dWindowSyncUnavailable = infraerrors.BadRequest("API_KEY_7D_WINDOW_SYNC_UNAVAILABLE", "selected account does not have a known future 7-day reset time")
+	ErrAPIKeyNotFound     = infraerrors.NotFound("API_KEY_NOT_FOUND", "api key not found")
+	ErrGroupNotAllowed    = infraerrors.Forbidden("GROUP_NOT_ALLOWED", "user is not allowed to bind this group")
+	ErrAPIKeyExists       = infraerrors.Conflict("API_KEY_EXISTS", "api key already exists")
+	ErrAPIKeyTooShort     = infraerrors.BadRequest("API_KEY_TOO_SHORT", "api key must be at least 16 characters")
+	ErrAPIKeyInvalidChars = infraerrors.BadRequest("API_KEY_INVALID_CHARS", "api key can only contain letters, numbers, underscores, and hyphens")
+	ErrAPIKeyRateLimited  = infraerrors.TooManyRequests("API_KEY_RATE_LIMITED", "too many failed attempts, please try again later")
+	ErrInvalidIPPattern   = infraerrors.BadRequest("INVALID_IP_PATTERN", "invalid IP or CIDR pattern")
 	// ErrAPIKeyExpired        = infraerrors.Forbidden("API_KEY_EXPIRED", "api key has expired")
 	ErrAPIKeyExpired = infraerrors.Forbidden("API_KEY_EXPIRED", "api key 已过期")
 	// ErrAPIKeyQuotaExhausted = infraerrors.TooManyRequests("API_KEY_QUOTA_EXHAUSTED", "api key quota exhausted")
@@ -41,8 +41,9 @@ var (
 )
 
 const (
-	apiKeyMaxErrorsPerHour = 20
-	apiKeyLastUsedMinTouch = 30 * time.Second
+	apiKeyMaxErrorsPerHour       = 20
+	apiKeyLastUsedMinTouch       = 30 * time.Second
+	apiKeySortCurrentConcurrency = "current_concurrency"
 	// DB 写失败后的短退避，避免请求路径持续同步重试造成写风暴与高延迟。
 	apiKeyLastUsedFailBackoff = 5 * time.Second
 )
@@ -61,9 +62,6 @@ type APIKeyRepository interface {
 	DeleteWithAudit(ctx context.Context, id int64) error
 
 	ListByUserID(ctx context.Context, userID int64, params pagination.PaginationParams, filters APIKeyListFilters) ([]APIKey, *pagination.PaginationResult, error)
-	// ListAll 列出全系统所有用户的 API Key（管理员全局视图）。
-	// 当 filters.UserID 非 nil 时仅返回该用户的 Key，否则返回全部。
-	ListAll(ctx context.Context, params pagination.PaginationParams, filters APIKeyListFilters) ([]APIKey, *pagination.PaginationResult, error)
 	VerifyOwnership(ctx context.Context, userID int64, apiKeyIDs []int64) ([]int64, error)
 	CountByUserID(ctx context.Context, userID int64) (int64, error)
 	ExistsByKey(ctx context.Context, key string) (bool, error)
@@ -86,8 +84,8 @@ type APIKeyRepository interface {
 	GetRateLimitData(ctx context.Context, id int64) (*APIKeyRateLimitData, error)
 }
 
-type APIKeyAccountRepository interface {
-	GetByID(ctx context.Context, id int64) (*Account, error)
+type apiKeyAllByUserIDLister interface {
+	ListAllByUserID(ctx context.Context, userID int64, filters APIKeyListFilters) ([]APIKey, error)
 }
 
 // APIKeyRateLimitData holds rate limit usage and window state for an API key.
@@ -161,7 +159,6 @@ type APIKeyAuthCacheInvalidator interface {
 // CreateAPIKeyRequest 创建API Key请求
 type CreateAPIKeyRequest struct {
 	Name        string   `json:"name"`
-	UserID      *int64   `json:"user_id"` // Optional target owner; nil uses the authenticated user.
 	GroupID     *int64   `json:"group_id"`
 	CustomKey   *string  `json:"custom_key"`   // 可选的自定义key
 	IPWhitelist []string `json:"ip_whitelist"` // IP 白名单
@@ -192,11 +189,10 @@ type UpdateAPIKeyRequest struct {
 	ResetQuota      *bool      `json:"reset_quota"` // Reset quota_used to 0
 
 	// Rate limit fields (nil = no change, 0 = unlimited)
-	RateLimit5h           *float64 `json:"rate_limit_5h"`
-	RateLimit1d           *float64 `json:"rate_limit_1d"`
-	RateLimit7d           *float64 `json:"rate_limit_7d"`
-	ResetRateLimitUsage   *bool    `json:"reset_rate_limit_usage"`    // Reset all usage counters to 0
-	Sync7dWindowAccountID *int64   `json:"sync_7d_window_account_id"` // Align 7d window to the selected upstream account
+	RateLimit5h         *float64 `json:"rate_limit_5h"`
+	RateLimit1d         *float64 `json:"rate_limit_1d"`
+	RateLimit7d         *float64 `json:"rate_limit_7d"`
+	ResetRateLimitUsage *bool    `json:"reset_rate_limit_usage"` // Reset all usage counters to 0
 }
 
 // APIKeyService API Key服务
@@ -207,7 +203,6 @@ type RateLimitCacheInvalidator interface {
 
 type APIKeyService struct {
 	apiKeyRepo            APIKeyRepository
-	accountRepo           APIKeyAccountRepository
 	userRepo              UserRepository
 	groupRepo             GroupRepository
 	userSubRepo           UserSubscriptionRepository
@@ -250,10 +245,6 @@ func NewAPIKeyService(
 // Called after construction (e.g. in wire) to avoid circular dependencies.
 func (s *APIKeyService) SetRateLimitCacheInvalidator(inv RateLimitCacheInvalidator) {
 	s.rateLimitCacheInvalid = inv
-}
-
-func (s *APIKeyService) SetAccountRepository(accountRepo APIKeyAccountRepository) {
-	s.accountRepo = accountRepo
 }
 
 func (s *APIKeyService) SetConcurrencyService(concurrencyService *ConcurrencyService) {
@@ -350,13 +341,8 @@ func (s *APIKeyService) canUserBindGroup(ctx context.Context, user *User, group 
 
 // Create 创建API Key
 func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIKeyRequest) (*APIKey, error) {
-	targetUserID := userID
-	if req.UserID != nil && *req.UserID > 0 {
-		targetUserID = *req.UserID
-	}
-
 	// 验证用户存在
-	user, err := s.userRepo.GetByID(ctx, targetUserID)
+	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("get user: %w", err)
 	}
@@ -393,7 +379,7 @@ func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIK
 	// 判断是否使用自定义Key
 	if req.CustomKey != nil && *req.CustomKey != "" {
 		// 检查限流（仅对自定义key进行限流）
-		if err := s.checkAPIKeyRateLimit(ctx, targetUserID); err != nil {
+		if err := s.checkAPIKeyRateLimit(ctx, userID); err != nil {
 			return nil, err
 		}
 
@@ -409,7 +395,7 @@ func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIK
 		}
 		if exists {
 			// Key已存在，增加错误计数
-			s.incrementAPIKeyErrorCount(ctx, targetUserID)
+			s.incrementAPIKeyErrorCount(ctx, userID)
 			return nil, ErrAPIKeyExists
 		}
 
@@ -425,7 +411,7 @@ func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIK
 
 	// 创建API Key记录
 	apiKey := &APIKey{
-		UserID:      targetUserID,
+		UserID:      userID,
 		Key:         key,
 		Name:        html.EscapeString(req.Name),
 		GroupID:     req.GroupID,
@@ -457,21 +443,85 @@ func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIK
 
 // List 获取用户的API Key列表
 func (s *APIKeyService) List(ctx context.Context, userID int64, params pagination.PaginationParams, filters APIKeyListFilters) ([]APIKey, *pagination.PaginationResult, error) {
-	// 管理员全局模式：不按调用者 userID 过滤，列出全系统所有用户的 Key
-	// （filters.UserID 非 nil 时仅列出该用户）。普通用户保持原有按自身 userID 过滤的逻辑。
-	if filters.AdminMode {
-		keys, pagination, err := s.apiKeyRepo.ListAll(ctx, params, filters)
-		if err != nil {
-			return nil, nil, fmt.Errorf("list api keys: %w", err)
-		}
-		return keys, pagination, nil
+	if normalizedAPIKeySortBy(params.SortBy) == apiKeySortCurrentConcurrency {
+		return s.listByCurrentConcurrency(ctx, userID, params, filters)
 	}
+
 	keys, pagination, err := s.apiKeyRepo.ListByUserID(ctx, userID, params, filters)
 	if err != nil {
 		return nil, nil, fmt.Errorf("list api keys: %w", err)
 	}
 	s.fillCurrentConcurrency(ctx, keys)
 	return keys, pagination, nil
+}
+
+func (s *APIKeyService) listByCurrentConcurrency(ctx context.Context, userID int64, params pagination.PaginationParams, filters APIKeyListFilters) ([]APIKey, *pagination.PaginationResult, error) {
+	repo, ok := s.apiKeyRepo.(apiKeyAllByUserIDLister)
+	if !ok {
+		return nil, nil, fmt.Errorf("list api keys by current concurrency: repository does not support unpaginated API key listing")
+	}
+
+	keys, err := repo.ListAllByUserID(ctx, userID, filters)
+	if err != nil {
+		return nil, nil, fmt.Errorf("list api keys: %w", err)
+	}
+	s.fillCurrentConcurrency(ctx, keys)
+	sortAPIKeysByCurrentConcurrency(keys, params.NormalizedSortOrder(pagination.SortOrderDesc))
+	return paginateAPIKeys(keys, params), apiKeyPaginationResult(int64(len(keys)), params), nil
+}
+
+func normalizedAPIKeySortBy(sortBy string) string {
+	return strings.ToLower(strings.TrimSpace(sortBy))
+}
+
+func sortAPIKeysByCurrentConcurrency(keys []APIKey, sortOrder string) {
+	desc := sortOrder != pagination.SortOrderAsc
+	sort.SliceStable(keys, func(i, j int) bool {
+		if keys[i].CurrentConcurrency == keys[j].CurrentConcurrency {
+			if desc {
+				return keys[i].ID > keys[j].ID
+			}
+			return keys[i].ID < keys[j].ID
+		}
+		if desc {
+			return keys[i].CurrentConcurrency > keys[j].CurrentConcurrency
+		}
+		return keys[i].CurrentConcurrency < keys[j].CurrentConcurrency
+	})
+}
+
+func paginateAPIKeys(keys []APIKey, params pagination.PaginationParams) []APIKey {
+	if len(keys) == 0 {
+		return []APIKey{}
+	}
+	limit := params.Limit()
+	page := params.Page
+	if page < 1 {
+		page = 1
+	}
+	offset := (page - 1) * limit
+	if offset >= len(keys) {
+		return []APIKey{}
+	}
+	end := offset + limit
+	if end > len(keys) {
+		end = len(keys)
+	}
+	return keys[offset:end]
+}
+
+func apiKeyPaginationResult(total int64, params pagination.PaginationParams) *pagination.PaginationResult {
+	limit := params.Limit()
+	pages := int(total) / limit
+	if int(total)%limit > 0 {
+		pages++
+	}
+	return &pagination.PaginationResult{
+		Total:    total,
+		Page:     params.Page,
+		PageSize: limit,
+		Pages:    pages,
+	}
 }
 
 func (s *APIKeyService) fillCurrentConcurrency(ctx context.Context, keys []APIKey) {
@@ -583,23 +633,13 @@ func (s *APIKeyService) GetByKey(ctx context.Context, key string) (*APIKey, erro
 
 // Update 更新API Key
 func (s *APIKeyService) Update(ctx context.Context, id int64, userID int64, req UpdateAPIKeyRequest) (*APIKey, error) {
-	return s.updateAPIKey(ctx, id, userID, req, false)
-}
-
-// UpdateAsAdmin 以管理员身份更新API Key：跳过所有权校验，且修改分组时跳过
-// 「目标用户是否有权绑定该分组」的校验，使管理员可像管理自己 Key 一样管理任意用户的 Key。
-func (s *APIKeyService) UpdateAsAdmin(ctx context.Context, id int64, userID int64, req UpdateAPIKeyRequest) (*APIKey, error) {
-	return s.updateAPIKey(ctx, id, userID, req, true)
-}
-
-func (s *APIKeyService) updateAPIKey(ctx context.Context, id int64, userID int64, req UpdateAPIKeyRequest, isAdmin bool) (*APIKey, error) {
 	apiKey, err := s.apiKeyRepo.GetByID(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("get api key: %w", err)
 	}
 
-	// 验证所有权（管理员跳过）
-	if !isAdmin && apiKey.UserID != userID {
+	// 验证所有权
+	if apiKey.UserID != userID {
 		return nil, ErrInsufficientPerms
 	}
 
@@ -623,21 +663,19 @@ func (s *APIKeyService) updateAPIKey(ctx context.Context, id int64, userID int64
 	}
 
 	if req.GroupID != nil {
-		// 验证分组权限（管理员跳过：可把任意分组指定给任意用户的 Key）
-		if !isAdmin {
-			user, err := s.userRepo.GetByID(ctx, userID)
-			if err != nil {
-				return nil, fmt.Errorf("get user: %w", err)
-			}
+		// 验证分组权限
+		user, err := s.userRepo.GetByID(ctx, userID)
+		if err != nil {
+			return nil, fmt.Errorf("get user: %w", err)
+		}
 
-			group, err := s.groupRepo.GetByID(ctx, *req.GroupID)
-			if err != nil {
-				return nil, fmt.Errorf("get group: %w", err)
-			}
+		group, err := s.groupRepo.GetByID(ctx, *req.GroupID)
+		if err != nil {
+			return nil, fmt.Errorf("get group: %w", err)
+		}
 
-			if !s.canUserBindGroup(ctx, user, group) {
-				return nil, ErrGroupNotAllowed
-			}
+		if !s.canUserBindGroup(ctx, user, group) {
+			return nil, ErrGroupNotAllowed
 		}
 
 		apiKey.GroupID = req.GroupID
@@ -703,26 +741,6 @@ func (s *APIKeyService) updateAPIKey(ctx context.Context, id int64, userID int64
 		apiKey.Window1dStart = nil
 		apiKey.Window7dStart = nil
 	}
-	synced7dWindow := false
-	if req.Sync7dWindowAccountID != nil {
-		if !isAdmin {
-			return nil, ErrInsufficientPerms
-		}
-		if s.accountRepo == nil {
-			return nil, ErrAPIKey7dWindowSyncUnavailable
-		}
-		account, err := s.accountRepo.GetByID(ctx, *req.Sync7dWindowAccountID)
-		if err != nil {
-			return nil, fmt.Errorf("get sync account: %w", err)
-		}
-		resetAt, ok := accountSevenDayResetAt(account, time.Now())
-		if !ok {
-			return nil, ErrAPIKey7dWindowSyncUnavailable
-		}
-		windowStart := resetAt.Add(-RateLimitWindow7d)
-		apiKey.Window7dStart = &windowStart
-		synced7dWindow = true
-	}
 
 	if err := s.apiKeyRepo.Update(ctx, apiKey); err != nil {
 		return nil, fmt.Errorf("update api key: %w", err)
@@ -732,59 +750,22 @@ func (s *APIKeyService) updateAPIKey(ctx context.Context, id int64, userID int64
 	s.compileAPIKeyIPRules(apiKey)
 
 	// Invalidate Redis rate limit cache so reset takes effect immediately
-	if (resetRateLimit || synced7dWindow) && s.rateLimitCacheInvalid != nil {
+	if resetRateLimit && s.rateLimitCacheInvalid != nil {
 		_ = s.rateLimitCacheInvalid.InvalidateAPIKeyRateLimit(ctx, apiKey.ID)
 	}
 
 	return apiKey, nil
 }
 
-func accountSevenDayResetAt(account *Account, now time.Time) (time.Time, bool) {
-	if account == nil || account.Extra == nil {
-		return time.Time{}, false
-	}
-
-	// Prefer product usage windows over generic account quota windows when both
-	// are present; API key 7d rate limits are meant to mirror upstream usage.
-	candidates := []time.Time{
-		parseExtraTime(account.Extra["codex_7d_reset_at"]),
-		parseUnixSecondsTime(account.Extra["passive_usage_7d_reset"]),
-		parseExtraTime(account.Extra["quota_weekly_reset_at"]),
-	}
-	for _, resetAt := range candidates {
-		if !resetAt.IsZero() && resetAt.After(now) {
-			return resetAt, true
-		}
-	}
-	return time.Time{}, false
-}
-
-func parseUnixSecondsTime(value any) time.Time {
-	seconds := parseExtraFloat64(value)
-	if seconds <= 0 {
-		return time.Time{}
-	}
-	return time.Unix(int64(seconds), 0)
-}
-
 // Delete 删除API Key
 func (s *APIKeyService) Delete(ctx context.Context, id int64, userID int64) error {
-	return s.deleteAPIKey(ctx, id, userID, false)
-}
-
-// DeleteAsAdmin 以管理员身份删除API Key：跳过所有权校验。
-func (s *APIKeyService) DeleteAsAdmin(ctx context.Context, id int64, userID int64) error {
-	return s.deleteAPIKey(ctx, id, userID, true)
-}
-
-func (s *APIKeyService) deleteAPIKey(ctx context.Context, id int64, userID int64, isAdmin bool) error {
 	key, ownerID, err := s.apiKeyRepo.GetKeyAndOwnerID(ctx, id)
 	if err != nil {
 		return fmt.Errorf("get api key: %w", err)
 	}
 
-	// 验证当前用户是否为该 API Key 的所有者（管理员跳过）
-	if !isAdmin && ownerID != userID {
+	// 验证当前用户是否为该 API Key 的所有者
+	if ownerID != userID {
 		return ErrInsufficientPerms
 	}
 
@@ -795,7 +776,7 @@ func (s *APIKeyService) deleteAPIKey(ctx context.Context, id int64, userID int64
 
 	// 删除成功后再清理缓存,避免"缓存已清但删除失败"的竞态。
 	if s.cache != nil {
-		_ = s.cache.DeleteCreateAttemptCount(ctx, ownerID)
+		_ = s.cache.DeleteCreateAttemptCount(ctx, userID)
 	}
 	s.InvalidateAuthCacheByKey(ctx, key)
 	s.lastUsedTouchL1.Delete(id)

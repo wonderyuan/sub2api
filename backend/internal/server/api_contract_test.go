@@ -52,9 +52,10 @@ func TestAPIContracts(t *testing.T) {
 					"email": "alice@example.com",
 					"email_bound": true,
 					"username": "alice",
-					"role": "user",
-					"balance": 12.5,
-					"concurrency": 5,
+						"role": "user",
+						"balance": 12.5,
+						"frozen_balance": 0,
+						"concurrency": 5,
 					"rpm_limit": 0,
 					"status": "active",
 					"allowed_groups": null,
@@ -212,65 +213,44 @@ func TestAPIContracts(t *testing.T) {
 			}`,
 		},
 		{
-			name:   "POST /api/v1/keys requires admin",
+			name:   "POST /api/v1/keys",
 			method: http.MethodPost,
 			path:   "/api/v1/keys",
 			body:   `{"name":"Key One","custom_key":"sk_custom_1234567890"}`,
 			headers: map[string]string{
 				"Content-Type": "application/json",
 			},
-			wantStatus: http.StatusForbidden,
+			wantStatus: http.StatusOK,
 			wantJSON: `{
-				"code": 403,
-				"message": "Only administrators can manage API keys"
-			}`,
-		},
-		{
-			name: "PUT /api/v1/keys/:id requires admin",
-			setup: func(t *testing.T, deps *contractDeps) {
-				t.Helper()
-				deps.apiKeyRepo.MustSeed(&service.APIKey{
-					ID:        100,
-					UserID:    1,
-					Key:       "sk_custom_1234567890",
-					Name:      "Key One",
-					Status:    service.StatusActive,
-					CreatedAt: deps.now,
-					UpdatedAt: deps.now,
-				})
-			},
-			method: http.MethodPut,
-			path:   "/api/v1/keys/100",
-			body:   `{"name":"Renamed"}`,
-			headers: map[string]string{
-				"Content-Type": "application/json",
-			},
-			wantStatus: http.StatusForbidden,
-			wantJSON: `{
-				"code": 403,
-				"message": "Only administrators can manage API keys"
-			}`,
-		},
-		{
-			name: "DELETE /api/v1/keys/:id requires admin",
-			setup: func(t *testing.T, deps *contractDeps) {
-				t.Helper()
-				deps.apiKeyRepo.MustSeed(&service.APIKey{
-					ID:        100,
-					UserID:    1,
-					Key:       "sk_custom_1234567890",
-					Name:      "Key One",
-					Status:    service.StatusActive,
-					CreatedAt: deps.now,
-					UpdatedAt: deps.now,
-				})
-			},
-			method:     http.MethodDelete,
-			path:       "/api/v1/keys/100",
-			wantStatus: http.StatusForbidden,
-			wantJSON: `{
-				"code": 403,
-				"message": "Only administrators can manage API keys"
+				"code": 0,
+				"message": "success",
+				"data": {
+					"id": 100,
+					"user_id": 1,
+					"key": "sk_custom_1234567890",
+					"name": "Key One",
+					"group_id": null,
+					"status": "active",
+					"ip_whitelist": null,
+					"ip_blacklist": null,
+					"last_used_at": null,
+					"last_used_ip": null,
+					"current_concurrency": 0,
+					"quota": 0,
+					"quota_used": 0,
+					"rate_limit_5h": 0,
+					"rate_limit_1d": 0,
+					"rate_limit_7d": 0,
+					"usage_5h": 0,
+					"usage_1d": 0,
+					"usage_7d": 0,
+					"window_5h_start": null,
+					"window_1d_start": null,
+					"window_7d_start": null,
+					"expires_at": null,
+					"created_at": "2025-01-02T03:04:05Z",
+					"updated_at": "2025-01-02T03:04:05Z"
+				}
 			}`,
 		},
 		{
@@ -305,6 +285,7 @@ func TestAPIContracts(t *testing.T) {
 							"ip_whitelist": null,
 							"ip_blacklist": null,
 							"last_used_at": null,
+							"last_used_ip": null,
 							"current_concurrency": 0,
 							"quota": 0,
 							"quota_used": 0,
@@ -382,9 +363,17 @@ func TestAPIContracts(t *testing.T) {
 						"image_price_1k": null,
 						"image_price_2k": null,
 						"image_price_4k": null,
+						"video_price_480p": null,
+						"video_price_720p": null,
+						"video_price_1080p": null,
 						"allow_image_generation": false,
+						"allow_batch_image_generation": false,
+						"batch_image_discount_multiplier": 0,
+						"batch_image_hold_multiplier": 0,
 						"image_rate_independent": false,
 						"image_rate_multiplier": 0,
+						"video_rate_independent": false,
+						"video_rate_multiplier": 0,
 						"claude_code_only": false,
 						"allow_messages_dispatch": false,
 						"fallback_group_id": null,
@@ -1417,8 +1406,6 @@ func newContractDeps(t *testing.T) *contractDeps {
 	v1Keys.Use(jwtAuth)
 	v1Keys.GET("/keys", apiKeyHandler.List)
 	v1Keys.POST("/keys", apiKeyHandler.Create)
-	v1Keys.PUT("/keys/:id", apiKeyHandler.Update)
-	v1Keys.DELETE("/keys/:id", apiKeyHandler.Delete)
 	v1Keys.GET("/groups/available", apiKeyHandler.GetAvailableGroups)
 
 	v1Usage := v1.Group("")
@@ -2296,46 +2283,6 @@ func (r *stubApiKeyRepo) ListByUserID(ctx context.Context, userID int64, params 
 	}, nil
 }
 
-// ListAll 管理员全局视图的测试桩：列出全部（或按 filters.UserID 过滤）。
-func (r *stubApiKeyRepo) ListAll(ctx context.Context, params pagination.PaginationParams, filters service.APIKeyListFilters) ([]service.APIKey, *pagination.PaginationResult, error) {
-	ids := make([]int64, 0, len(r.byID))
-	for id := range r.byID {
-		if filters.UserID != nil && r.byID[id].UserID != *filters.UserID {
-			continue
-		}
-		ids = append(ids, id)
-	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] > ids[j] })
-
-	start := params.Offset()
-	if start > len(ids) {
-		start = len(ids)
-	}
-	end := start + params.Limit()
-	if end > len(ids) {
-		end = len(ids)
-	}
-
-	out := make([]service.APIKey, 0, end-start)
-	for _, id := range ids[start:end] {
-		clone := *r.byID[id]
-		out = append(out, clone)
-	}
-
-	total := int64(len(ids))
-	pageSize := params.Limit()
-	pages := int(math.Ceil(float64(total) / float64(pageSize)))
-	if pages < 1 {
-		pages = 1
-	}
-	return out, &pagination.PaginationResult{
-		Total:    total,
-		Page:     params.Page,
-		PageSize: pageSize,
-		Pages:    pages,
-	}, nil
-}
-
 func (r *stubApiKeyRepo) VerifyOwnership(ctx context.Context, userID int64, apiKeyIDs []int64) ([]int64, error) {
 	if len(apiKeyIDs) == 0 {
 		return []int64{}, nil
@@ -2535,10 +2482,6 @@ func (r *stubUsageLogRepo) GetAPIKeyUsageTrend(ctx context.Context, startTime, e
 }
 
 func (r *stubUsageLogRepo) GetUserUsageTrend(ctx context.Context, startTime, endTime time.Time, granularity string, limit int) ([]usagestats.UserUsageTrendPoint, error) {
-	return nil, errors.New("not implemented")
-}
-
-func (r *stubUsageLogRepo) GetUserRequestBodyTrend(ctx context.Context, startTime, endTime time.Time, granularity string, limit int) ([]usagestats.UserRequestBodyTrendPoint, error) {
 	return nil, errors.New("not implemented")
 }
 

@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"go.uber.org/zap"
+	pkghttputil "github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
 )
 
 type requestBodyLimitResponder func(status int, code string, message string)
@@ -57,4 +59,15 @@ func extractMaxBytesError(err error) (*http.MaxBytesError, bool) {
 
 func buildBodyTooLargeMessage(limit int64) string {
 	return fmt.Sprintf("Request body too large: maximum size is %d bytes", limit)
+}
+
+func readLenientJSONRequestBodyWithPrealloc(req *http.Request, cfg *config.Config) ([]byte, error) {
+	return pkghttputil.ReadLenientJSONRequestBodyWithPrealloc(req, gatewayMaxBodySize(cfg))
+}
+
+func gatewayMaxBodySize(cfg *config.Config) int64 {
+	if cfg == nil {
+		return 0
+	}
+	return cfg.Gateway.MaxBodySize
 }
