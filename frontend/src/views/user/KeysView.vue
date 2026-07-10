@@ -73,7 +73,7 @@
               </button>
             </div>
           </div>
-          <button v-if="isAdmin" @click="showCreateModal = true" class="btn btn-primary" data-tour="keys-create-btn">
+          <button v-if="isAdmin" @click="openCreateModal" class="btn btn-primary" data-tour="keys-create-btn">
             <Icon name="plus" size="md" class="mr-2" />
             {{ t('keys.createKey') }}
           </button>
