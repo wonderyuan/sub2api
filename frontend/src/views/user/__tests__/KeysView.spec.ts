@@ -16,6 +16,7 @@ const {
   copyToClipboard,
   isCurrentStep,
   nextStep,
+  authStore,
 } = vi.hoisted(() => ({
   listKeys: vi.fn(),
   getPublicSettings: vi.fn(),
@@ -27,6 +28,7 @@ const {
   copyToClipboard: vi.fn(),
   isCurrentStep: vi.fn(),
   nextStep: vi.fn(),
+  authStore: { isAdmin: true },
 }))
 
 const messages: Record<string, string> = {
@@ -72,6 +74,11 @@ vi.mock('@/api', () => ({
     getAvailable: getAvailableGroups,
     getUserGroupRates,
   },
+  adminAPI: {
+    groups: {
+      getAllIncludingInactive: getAvailableGroups,
+    },
+  },
 }))
 
 vi.mock('@/stores/app', () => ({
@@ -79,6 +86,10 @@ vi.mock('@/stores/app', () => ({
     showError,
     showSuccess,
   }),
+}))
+
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: () => authStore,
 }))
 
 vi.mock('@/stores/onboarding', () => ({
@@ -282,6 +293,7 @@ describe('user KeysView column settings', () => {
     const wrapper = await mountView()
 
     expect(visibleColumnKeys(wrapper)).toEqual([
+      'owner',
       'name',
       'key',
       'group',
@@ -336,6 +348,7 @@ describe('user KeysView column settings', () => {
     const wrapper = await mountView()
 
     expect(visibleColumnKeys(wrapper)).toEqual([
+      'owner',
       'name',
       'key',
       'current_concurrency',
