@@ -41703,6 +41703,8 @@ type UsageLogMutation struct {
 	addduration_ms              *int
 	first_token_ms              *int
 	addfirst_token_ms           *int
+	request_body_bytes          *int64
+	addrequest_body_bytes       *int64
 	user_agent                  *string
 	ip_address                  *string
 	image_count                 *int
@@ -43456,6 +43458,62 @@ func (m *UsageLogMutation) ResetFirstTokenMs() {
 	delete(m.clearedFields, usagelog.FieldFirstTokenMs)
 }
 
+// SetRequestBodyBytes sets the "request_body_bytes" field.
+func (m *UsageLogMutation) SetRequestBodyBytes(i int64) {
+	m.request_body_bytes = &i
+	m.addrequest_body_bytes = nil
+}
+
+// RequestBodyBytes returns the value of the "request_body_bytes" field in the mutation.
+func (m *UsageLogMutation) RequestBodyBytes() (r int64, exists bool) {
+	v := m.request_body_bytes
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRequestBodyBytes returns the old "request_body_bytes" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldRequestBodyBytes(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRequestBodyBytes is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRequestBodyBytes requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRequestBodyBytes: %w", err)
+	}
+	return oldValue.RequestBodyBytes, nil
+}
+
+// AddRequestBodyBytes adds i to the "request_body_bytes" field.
+func (m *UsageLogMutation) AddRequestBodyBytes(i int64) {
+	if m.addrequest_body_bytes != nil {
+		*m.addrequest_body_bytes += i
+	} else {
+		m.addrequest_body_bytes = &i
+	}
+}
+
+// AddedRequestBodyBytes returns the value that was added to the "request_body_bytes" field in this mutation.
+func (m *UsageLogMutation) AddedRequestBodyBytes() (r int64, exists bool) {
+	v := m.addrequest_body_bytes
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetRequestBodyBytes resets all changes to the "request_body_bytes" field.
+func (m *UsageLogMutation) ResetRequestBodyBytes() {
+	m.request_body_bytes = nil
+	m.addrequest_body_bytes = nil
+}
+
 // SetUserAgent sets the "user_agent" field.
 func (m *UsageLogMutation) SetUserAgent(s string) {
 	m.user_agent = &s
@@ -44271,7 +44329,7 @@ func (m *UsageLogMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *UsageLogMutation) Fields() []string {
-	fields := make([]string, 0, 44)
+	fields := make([]string, 0, 45)
 	if m.user != nil {
 		fields = append(fields, usagelog.FieldUserID)
 	}
@@ -44364,6 +44422,9 @@ func (m *UsageLogMutation) Fields() []string {
 	}
 	if m.first_token_ms != nil {
 		fields = append(fields, usagelog.FieldFirstTokenMs)
+	}
+	if m.request_body_bytes != nil {
+		fields = append(fields, usagelog.FieldRequestBodyBytes)
 	}
 	if m.user_agent != nil {
 		fields = append(fields, usagelog.FieldUserAgent)
@@ -44474,6 +44535,8 @@ func (m *UsageLogMutation) Field(name string) (ent.Value, bool) {
 		return m.DurationMs()
 	case usagelog.FieldFirstTokenMs:
 		return m.FirstTokenMs()
+	case usagelog.FieldRequestBodyBytes:
+		return m.RequestBodyBytes()
 	case usagelog.FieldUserAgent:
 		return m.UserAgent()
 	case usagelog.FieldIPAddress:
@@ -44571,6 +44634,8 @@ func (m *UsageLogMutation) OldField(ctx context.Context, name string) (ent.Value
 		return m.OldDurationMs(ctx)
 	case usagelog.FieldFirstTokenMs:
 		return m.OldFirstTokenMs(ctx)
+	case usagelog.FieldRequestBodyBytes:
+		return m.OldRequestBodyBytes(ctx)
 	case usagelog.FieldUserAgent:
 		return m.OldUserAgent(ctx)
 	case usagelog.FieldIPAddress:
@@ -44823,6 +44888,13 @@ func (m *UsageLogMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetFirstTokenMs(v)
 		return nil
+	case usagelog.FieldRequestBodyBytes:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRequestBodyBytes(v)
+		return nil
 	case usagelog.FieldUserAgent:
 		v, ok := value.(string)
 		if !ok {
@@ -44976,6 +45048,9 @@ func (m *UsageLogMutation) AddedFields() []string {
 	if m.addfirst_token_ms != nil {
 		fields = append(fields, usagelog.FieldFirstTokenMs)
 	}
+	if m.addrequest_body_bytes != nil {
+		fields = append(fields, usagelog.FieldRequestBodyBytes)
+	}
 	if m.addimage_count != nil {
 		fields = append(fields, usagelog.FieldImageCount)
 	}
@@ -45029,6 +45104,8 @@ func (m *UsageLogMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedDurationMs()
 	case usagelog.FieldFirstTokenMs:
 		return m.AddedFirstTokenMs()
+	case usagelog.FieldRequestBodyBytes:
+		return m.AddedRequestBodyBytes()
 	case usagelog.FieldImageCount:
 		return m.AddedImageCount()
 	case usagelog.FieldVideoCount:
@@ -45169,6 +45246,13 @@ func (m *UsageLogMutation) AddField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.AddFirstTokenMs(v)
+		return nil
+	case usagelog.FieldRequestBodyBytes:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddRequestBodyBytes(v)
 		return nil
 	case usagelog.FieldImageCount:
 		v, ok := value.(int)
@@ -45433,6 +45517,9 @@ func (m *UsageLogMutation) ResetField(name string) error {
 		return nil
 	case usagelog.FieldFirstTokenMs:
 		m.ResetFirstTokenMs()
+		return nil
+	case usagelog.FieldRequestBodyBytes:
+		m.ResetRequestBodyBytes()
 		return nil
 	case usagelog.FieldUserAgent:
 		m.ResetUserAgent()

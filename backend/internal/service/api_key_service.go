@@ -784,6 +784,22 @@ func (s *APIKeyService) Delete(ctx context.Context, id int64, userID int64) erro
 	return nil
 }
 
+func (s *APIKeyService) UpdateAsAdmin(ctx context.Context, id int64, _ int64, req UpdateAPIKeyRequest) (*APIKey, error) {
+	key, err := s.apiKeyRepo.GetByID(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("get api key: %w", err)
+	}
+	return s.Update(ctx, id, key.UserID, req)
+}
+
+func (s *APIKeyService) DeleteAsAdmin(ctx context.Context, id int64, _ int64) error {
+	key, err := s.apiKeyRepo.GetByID(ctx, id)
+	if err != nil {
+		return fmt.Errorf("get api key: %w", err)
+	}
+	return s.Delete(ctx, id, key.UserID)
+}
+
 // ValidateKey 验证API Key是否有效（用于认证中间件）
 func (s *APIKeyService) ValidateKey(ctx context.Context, key string) (*APIKey, *User, error) {
 	// 获取API Key

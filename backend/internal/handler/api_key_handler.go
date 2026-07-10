@@ -186,7 +186,6 @@ func (h *APIKeyHandler) Create(c *gin.Context) {
 
 	svcReq := service.CreateAPIKeyRequest{
 		Name:          req.Name,
-		UserID:        req.UserID,
 		GroupID:       req.GroupID,
 		CustomKey:     req.CustomKey,
 		IPWhitelist:   req.IPWhitelist,
@@ -240,15 +239,14 @@ func (h *APIKeyHandler) Update(c *gin.Context) {
 	}
 
 	svcReq := service.UpdateAPIKeyRequest{
-		IPWhitelist:           req.IPWhitelist,
-		IPBlacklist:           req.IPBlacklist,
-		Quota:                 req.Quota,
-		ResetQuota:            req.ResetQuota,
-		RateLimit5h:           req.RateLimit5h,
-		RateLimit1d:           req.RateLimit1d,
-		RateLimit7d:           req.RateLimit7d,
-		ResetRateLimitUsage:   req.ResetRateLimitUsage,
-		Sync7dWindowAccountID: req.Sync7dWindowAccountID,
+		IPWhitelist:         req.IPWhitelist,
+		IPBlacklist:         req.IPBlacklist,
+		Quota:               req.Quota,
+		ResetQuota:          req.ResetQuota,
+		RateLimit5h:         req.RateLimit5h,
+		RateLimit1d:         req.RateLimit1d,
+		RateLimit7d:         req.RateLimit7d,
+		ResetRateLimitUsage: req.ResetRateLimitUsage,
 	}
 	if req.Name != "" {
 		svcReq.Name = &req.Name
