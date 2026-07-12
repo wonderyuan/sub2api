@@ -6,9 +6,9 @@ import (
 	"net/http"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	pkghttputil "github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"go.uber.org/zap"
-	pkghttputil "github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
 )
 
 type requestBodyLimitResponder func(status int, code string, message string)
