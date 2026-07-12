@@ -102,6 +102,10 @@ func (m *opsRepoMock) GetErrorDistribution(ctx context.Context, filter *OpsDashb
 	return &OpsErrorDistributionResponse{}, nil
 }
 
+func (m *opsRepoMock) GetInvestigationErrorGroups(ctx context.Context, filter *OpsDashboardFilter) ([]*OpsInvestigationErrorGroup, error) {
+	return []*OpsInvestigationErrorGroup{}, nil
+}
+
 func (m *opsRepoMock) GetOpenAITokenStats(ctx context.Context, filter *OpsOpenAITokenStatsFilter) (*OpsOpenAITokenStatsResponse, error) {
 	return &OpsOpenAITokenStatsResponse{}, nil
 }

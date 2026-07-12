@@ -203,6 +203,35 @@ export interface OpsErrorDistributionResponse {
   items: OpsErrorDistributionItem[]
 }
 
+export type OpsInvestigationSeverity = 'critical' | 'warning' | 'info'
+
+export interface OpsInvestigationFinding {
+  rule: string
+  kind: 'error' | 'latency'
+  severity: OpsInvestigationSeverity
+  phase?: string
+  owner?: string
+  status_code?: number
+  platform?: string
+  group_id?: number | null
+  current_count?: number
+  baseline_count?: number
+  delta_count?: number
+  change_percent?: number
+  share_percent?: number
+  current_value_ms?: number
+  baseline_value_ms?: number
+}
+
+export interface OpsInvestigationResponse {
+  start_time: string
+  end_time: string
+  baseline_start: string
+  baseline_end: string
+  total_errors: number
+  findings: OpsInvestigationFinding[]
+}
+
 export interface OpsDashboardSnapshotV2Response {
   generated_at: string
   overview: OpsDashboardOverview
@@ -1074,6 +1103,24 @@ export async function getErrorDistribution(
   return data
 }
 
+export async function getInvestigation(
+  params: {
+    time_range?: '5m' | '30m' | '1h' | '6h' | '24h'
+    start_time?: string
+    end_time?: string
+    platform?: string
+    group_id?: number | null
+    mode?: OpsQueryMode
+  },
+  options: OpsRequestOptions = {}
+): Promise<OpsInvestigationResponse> {
+  const { data } = await apiClient.get<OpsInvestigationResponse>('/admin/ops/dashboard/investigation', {
+    params,
+    signal: options.signal
+  })
+  return data
+}
+
 export async function getOpenAITokenStats(
   params: OpsOpenAITokenStatsParams,
   options: OpsRequestOptions = {}
@@ -1318,6 +1365,7 @@ export const opsAPI = {
   getLatencyHistogram,
   getErrorTrend,
   getErrorDistribution,
+  getInvestigation,
   getOpenAITokenStats,
   getConcurrencyStats,
   getUserConcurrencyStats,

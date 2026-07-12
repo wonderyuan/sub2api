@@ -118,6 +118,7 @@ export default {
       failedToLoadLatencyHistogram: '加载请求时长分布失败',
       failedToLoadErrorTrend: '加载错误趋势失败',
       failedToLoadErrorDistribution: '加载错误分布失败',
+      failedToLoadInvestigation: '加载调查结论失败',
       failedToLoadErrorDetail: '加载错误详情失败',
       retryFailed: '重试失败',
       tpsK: 'TPS（千）',
@@ -128,6 +129,32 @@ export default {
       errorTrend: '错误趋势',
       errorDistribution: '错误分布',
       switchRate: '平均账号切换',
+      investigation: {
+        title: '调查结论',
+        subtitle: '规则基于当前窗口与此前基线的聚合数据生成，不读取请求内容。',
+        totalErrors: '当前错误 {count}',
+        emptyTitle: '未发现需要调查的异常',
+        emptyDescription: '当前窗口没有达到规则阈值的系统、上游或性能异常。',
+        errorEvidence: '当前 {current}，基线 {baseline}，变化 {change}%，占当前错误 {share}%',
+        latencyEvidence: '当前 p95 {current}，基线 {baseline}，变化 {change}%',
+        severity: {
+          critical: '紧急',
+          warning: '关注',
+          info: '提示'
+        },
+        rules: {
+          provider_throttle: { title: '上游限流或过载', action: '查看上游错误' },
+          provider_failure: { title: '上游服务失败或超时', action: '查看上游错误' },
+          provider_policy: { title: '上游策略拦截', action: '查看上游错误' },
+          routing_capacity: { title: '路由无可用账号或容量不足', action: '查看请求错误' },
+          platform_failure: { title: '网关内部处理异常', action: '查看请求错误' },
+          request_body_limit: { title: '请求体超过平台限制', action: '查看请求错误' },
+          client_auth: { title: '客户端认证配置错误', action: '查看请求错误' },
+          client_request: { title: '客户端请求参数错误', action: '查看请求错误' },
+          duration_p95_regression: { title: '请求时长 p95 明显劣化', action: '查看请求错误' },
+          ttft_p95_regression: { title: '首 Token 延迟 p95 明显劣化', action: '查看请求错误' }
+        }
+      },
       // Health Score & Diagnosis
       health: '健康',
       healthCondition: '健康状况',

@@ -219,6 +219,43 @@ func (h *OpsHandler) GetDashboardErrorDistribution(c *gin.Context) {
 	response.Success(c, data)
 }
 
+// GetDashboardInvestigation returns deterministic incident hypotheses derived
+// from aggregated error metadata and latency percentiles.
+// GET /api/v1/admin/ops/dashboard/investigation
+func (h *OpsHandler) GetDashboardInvestigation(c *gin.Context) {
+	if h.opsService == nil {
+		response.Error(c, http.StatusServiceUnavailable, "Ops service not available")
+		return
+	}
+
+	startTime, endTime, err := parseOpsTimeRange(c, "1h")
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	filter := &service.OpsDashboardFilter{
+		StartTime: startTime,
+		EndTime:   endTime,
+		Platform:  strings.TrimSpace(c.Query("platform")),
+		QueryMode: parseOpsQueryMode(c),
+	}
+	if v := strings.TrimSpace(c.Query("group_id")); v != "" {
+		id, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || id <= 0 {
+			response.BadRequest(c, "Invalid group_id")
+			return
+		}
+		filter.GroupID = &id
+	}
+
+	data, err := h.opsService.GetDashboardInvestigation(c.Request.Context(), filter)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, data)
+}
+
 // GetDashboardOpenAITokenStats returns OpenAI token efficiency stats grouped by model.
 // GET /api/v1/admin/ops/dashboard/openai-token-stats
 func (h *OpsHandler) GetDashboardOpenAITokenStats(c *gin.Context) {

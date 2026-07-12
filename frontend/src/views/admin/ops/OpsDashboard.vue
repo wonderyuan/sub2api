@@ -94,6 +94,13 @@
       </div>
 
       <!-- Alert Events -->
+      <OpsInvestigationCard
+        v-if="opsEnabled && !(loading && !hasLoadedOnce)"
+        :data="investigation"
+        :loading="loadingInvestigation"
+        @open-error-details="openErrorDetails"
+      />
+
       <OpsAlertEventsCard v-if="opsEnabled && showAlertEvents && !(loading && !hasLoadedOnce)" />
 
       <!-- System Logs -->
@@ -148,6 +155,7 @@ import {
   type OpsDashboardOverview,
   type OpsErrorDistributionResponse,
   type OpsErrorTrendResponse,
+  type OpsInvestigationResponse,
   type OpsLatencyHistogramResponse,
   type OpsThroughputTrendResponse,
   type OpsMetricThresholds
@@ -158,6 +166,7 @@ import OpsDashboardSkeleton from './components/OpsDashboardSkeleton.vue'
 import OpsConcurrencyCard from './components/OpsConcurrencyCard.vue'
 import OpsErrorDetailModal from './components/OpsErrorDetailModal.vue'
 import OpsErrorDistributionChart from './components/OpsErrorDistributionChart.vue'
+import OpsInvestigationCard from './components/OpsInvestigationCard.vue'
 import OpsErrorDetailsModal from './components/OpsErrorDetailsModal.vue'
 import OpsErrorTrendChart from './components/OpsErrorTrendChart.vue'
 import OpsLatencyChart from './components/OpsLatencyChart.vue'
@@ -361,6 +370,9 @@ const loadingErrorTrend = ref(false)
 
 const errorDistribution = ref<OpsErrorDistributionResponse | null>(null)
 const loadingErrorDistribution = ref(false)
+
+const investigation = ref<OpsInvestigationResponse | null>(null)
+const loadingInvestigation = ref(false)
 
 const selectedErrorId = ref<number | null>(null)
 const showErrorModal = ref(false)
@@ -676,11 +688,30 @@ async function refreshErrorDistributionWithCancel(fetchSeq: number, signal: Abor
   }
 }
 
+async function refreshInvestigationWithCancel(fetchSeq: number, signal: AbortSignal) {
+  if (!opsEnabled.value) return
+  loadingInvestigation.value = true
+  try {
+    const data = await opsAPI.getInvestigation(buildApiParams(), { signal })
+    if (fetchSeq !== dashboardFetchSeq) return
+    investigation.value = data
+  } catch (err: any) {
+    if (fetchSeq !== dashboardFetchSeq || isCanceledRequest(err)) return
+    investigation.value = null
+    appStore.showError(err?.message || t('admin.ops.failedToLoadInvestigation'))
+  } finally {
+    if (fetchSeq === dashboardFetchSeq) {
+      loadingInvestigation.value = false
+    }
+  }
+}
+
 async function refreshDeferredPanels(fetchSeq: number, signal: AbortSignal) {
   if (!opsEnabled.value) return
   await Promise.all([
     refreshLatencyHistogramWithCancel(fetchSeq, signal),
-    refreshErrorDistributionWithCancel(fetchSeq, signal)
+    refreshErrorDistributionWithCancel(fetchSeq, signal),
+    refreshInvestigationWithCancel(fetchSeq, signal)
   ])
 }
 

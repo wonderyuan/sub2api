@@ -118,6 +118,7 @@ export default {
       failedToLoadLatencyHistogram: 'Failed to load request duration histogram',
       failedToLoadErrorTrend: 'Failed to load error trend',
       failedToLoadErrorDistribution: 'Failed to load error distribution',
+      failedToLoadInvestigation: 'Failed to load investigation findings',
       failedToLoadErrorDetail: 'Failed to load error detail',
       retryFailed: 'Retry failed',
       tpsK: 'TPS (K)',
@@ -128,6 +129,32 @@ export default {
       errorTrend: 'Error Trend',
       errorDistribution: 'Error Distribution',
       switchRate: 'Avg switches',
+      investigation: {
+        title: 'Investigation Findings',
+        subtitle: 'Rules compare aggregated current data with a prior baseline and never inspect request content.',
+        totalErrors: '{count} current errors',
+        emptyTitle: 'No findings need investigation',
+        emptyDescription: 'No system, upstream, or performance condition reached the investigation threshold.',
+        errorEvidence: 'Current {current}, baseline {baseline}, change {change}%, {share}% of current errors',
+        latencyEvidence: 'Current p95 {current}, baseline {baseline}, change {change}%',
+        severity: {
+          critical: 'Critical',
+          warning: 'Watch',
+          info: 'Info'
+        },
+        rules: {
+          provider_throttle: { title: 'Upstream throttling or overload', action: 'View upstream errors' },
+          provider_failure: { title: 'Upstream service failure or timeout', action: 'View upstream errors' },
+          provider_policy: { title: 'Upstream policy rejection', action: 'View upstream errors' },
+          routing_capacity: { title: 'Routing has no available account or capacity', action: 'View request errors' },
+          platform_failure: { title: 'Gateway internal processing failure', action: 'View request errors' },
+          request_body_limit: { title: 'Request body exceeds the platform limit', action: 'View request errors' },
+          client_auth: { title: 'Client authentication configuration error', action: 'View request errors' },
+          client_request: { title: 'Client request parameter error', action: 'View request errors' },
+          duration_p95_regression: { title: 'Request-duration p95 regressed', action: 'View request errors' },
+          ttft_p95_regression: { title: 'Time-to-first-token p95 regressed', action: 'View request errors' }
+        }
+      },
       // Health Score & Diagnosis
       health: 'Health',
       healthCondition: 'Health Condition',
