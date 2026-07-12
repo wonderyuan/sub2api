@@ -11,6 +11,7 @@ const {
   getDashboardApiKeysUsage,
   getAvailableGroups,
   getUserGroupRates,
+  listAdminUsers,
   showError,
   showSuccess,
   copyToClipboard,
@@ -23,6 +24,7 @@ const {
   getDashboardApiKeysUsage: vi.fn(),
   getAvailableGroups: vi.fn(),
   getUserGroupRates: vi.fn(),
+  listAdminUsers: vi.fn(),
   showError: vi.fn(),
   showSuccess: vi.fn(),
   copyToClipboard: vi.fn(),
@@ -77,6 +79,9 @@ vi.mock('@/api', () => ({
   adminAPI: {
     groups: {
       getAllIncludingInactive: getAvailableGroups,
+    },
+    users: {
+      list: listAdminUsers,
     },
   },
 }))
@@ -214,6 +219,11 @@ const PaginationStub = {
   `,
 }
 
+const BaseDialogStub = {
+  props: ['show'],
+  template: '<div v-if="show"><slot /></div>',
+}
+
 const IconStub = {
   props: ['name'],
   template: '<span data-test="icon">{{ name }}</span>',
@@ -227,7 +237,7 @@ const mountView = async () => {
         TablePageLayout: TablePageLayoutStub,
         DataTable: DataTableStub,
         Pagination: PaginationStub,
-        BaseDialog: true,
+        BaseDialog: BaseDialogStub,
         ConfirmDialog: true,
         EmptyState: true,
         Select: SelectStub,
@@ -269,6 +279,7 @@ describe('user KeysView column settings', () => {
     getDashboardApiKeysUsage.mockReset()
     getAvailableGroups.mockReset()
     getUserGroupRates.mockReset()
+    listAdminUsers.mockReset()
     showError.mockReset()
     showSuccess.mockReset()
     copyToClipboard.mockReset()
@@ -286,6 +297,7 @@ describe('user KeysView column settings', () => {
     getDashboardApiKeysUsage.mockResolvedValue({ stats: {} })
     getAvailableGroups.mockResolvedValue([])
     getUserGroupRates.mockResolvedValue({})
+    listAdminUsers.mockResolvedValue({ items: [], pages: 1 })
     isCurrentStep.mockReturnValue(false)
   })
 
@@ -307,6 +319,24 @@ describe('user KeysView column settings', () => {
     expect(visibleColumnKeys(wrapper)).not.toContain('rate_limit')
     expect(visibleColumnKeys(wrapper)).not.toContain('last_used_at')
     expect(visibleColumnKeys(wrapper)).not.toContain('last_used_ip')
+  })
+
+  it('loads users into the create-key owner selector for administrators', async () => {
+    listAdminUsers.mockResolvedValueOnce({
+      items: [{ id: 42, username: 'assigned-user', email: 'assigned@example.com', status: 'active' }],
+      pages: 1,
+    })
+    const wrapper = await mountView()
+
+    await getButtonByText(wrapper, 'Create API Key').trigger('click')
+    await flushPromises()
+
+    expect(listAdminUsers).toHaveBeenCalledWith(1, 1000, { sort_by: 'email', sort_order: 'asc' })
+    expect(
+      wrapper.findAllComponents({ name: 'Select' }).some((select) =>
+        (select.props('options') as Array<{ value: number }>).some((option) => option.value === 42)
+      )
+    ).toBe(true)
   })
 
   it('shows a hidden column when toggled and persists the preference', async () => {

@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/stretchr/testify/require"
 )
@@ -31,6 +32,7 @@ type apiKeyRepoStub struct {
 	updateErr              error   // Update 的错误返回值
 	deletedIDs             []int64 // 记录已删除的 API Key ID 列表
 	updatedKeys            []APIKey
+	createdKeys            []APIKey
 	allowListByUserID      bool
 	listByUserIDKeys       []APIKey
 	listByUserIDErr        error
@@ -50,7 +52,10 @@ type apiKeyRepoStub struct {
 // 以下方法在本测试中不应被调用，使用 panic 确保测试失败时能快速定位问题
 
 func (s *apiKeyRepoStub) Create(ctx context.Context, key *APIKey) error {
-	panic("unexpected Create call")
+	if key != nil {
+		s.createdKeys = append(s.createdKeys, *key)
+	}
+	return nil
 }
 
 func (s *apiKeyRepoStub) GetByID(ctx context.Context, id int64) (*APIKey, error) {
@@ -62,6 +67,23 @@ func (s *apiKeyRepoStub) GetByID(ctx context.Context, id int64) (*APIKey, error)
 		return &clone, nil
 	}
 	panic("unexpected GetByID call")
+}
+
+func TestAPIKeyService_Create_AssignsKeyToSpecifiedUser(t *testing.T) {
+	targetUserID := int64(42)
+	apiKeyRepo := &apiKeyRepoStub{}
+	userRepo := &userRepoStub{user: &User{ID: targetUserID, Status: StatusActive}}
+	svc := NewAPIKeyService(apiKeyRepo, userRepo, nil, nil, nil, nil, &config.Config{})
+
+	created, err := svc.Create(context.Background(), 1, CreateAPIKeyRequest{
+		Name:   "assigned-by-admin",
+		UserID: &targetUserID,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, targetUserID, created.UserID)
+	require.Len(t, apiKeyRepo.createdKeys, 1)
+	require.Equal(t, targetUserID, apiKeyRepo.createdKeys[0].UserID)
 }
 
 func (s *apiKeyRepoStub) GetKeyAndOwnerID(ctx context.Context, id int64) (string, int64, error) {

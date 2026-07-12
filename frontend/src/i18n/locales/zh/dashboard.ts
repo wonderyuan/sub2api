@@ -72,6 +72,11 @@ export default {
     searchPlaceholder: '搜索名称或Key...',
     searchPlaceholderAdmin: '搜索名称、Key、用户名、邮箱或用户ID...',
     ownerColumn: '所属用户',
+    userLabel: '用户',
+    selectUser: '选择用户',
+    searchUser: '搜索用户...',
+    userRequired: '请选择用户',
+    failedToLoadUsers: '加载用户失败',
     failedToLoadAccounts: '加载账号失败',
     endpoints: {
       title: 'API 端点',

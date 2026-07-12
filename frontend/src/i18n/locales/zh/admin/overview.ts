@@ -36,6 +36,7 @@ export default {
       metricTokens: '按 Token',
       metricActualCost: '按实际消费',
       tokenUsageTrend: 'Token 使用趋势',
+      requestBodyTrend: '请求体大小趋势',
       noDataAvailable: '暂无数据',
       model: '模型',
       group: '分组',

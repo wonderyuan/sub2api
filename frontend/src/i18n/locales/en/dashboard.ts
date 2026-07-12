@@ -72,6 +72,11 @@ export default {
     searchPlaceholder: 'Search name or key...',
     searchPlaceholderAdmin: 'Search name, key, user, email or user ID...',
     ownerColumn: 'Owner',
+    userLabel: 'User',
+    selectUser: 'Select a user',
+    searchUser: 'Search users...',
+    userRequired: 'Please select a user',
+    failedToLoadUsers: 'Failed to load users',
     failedToLoadAccounts: 'Failed to load accounts',
     endpoints: {
       title: 'API Endpoints',

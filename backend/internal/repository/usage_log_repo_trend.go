@@ -28,17 +28,32 @@ type APIKeyUsageTrendPoint = usagestats.APIKeyUsageTrendPoint
 
 // GetUserRequestBodyTrend returns per-user request body metrics for the dashboard.
 func (r *usageLogRepository) GetUserRequestBodyTrend(ctx context.Context, startTime, endTime time.Time, granularity string, limit int) (results []usagestats.UserRequestBodyTrendPoint, err error) {
+	if limit <= 0 {
+		limit = 12
+	}
 	dateFormat := safeDateFormat(granularity)
 	query := fmt.Sprintf(`
+		WITH top_users AS (
+			SELECT user_id
+			FROM usage_logs
+			WHERE created_at >= $1
+			  AND created_at < $2
+			  AND request_body_bytes > 0
+			GROUP BY user_id
+			ORDER BY SUM(request_body_bytes) DESC
+			LIMIT $3
+		)
 		SELECT TO_CHAR(u.created_at, '%s'), u.user_id, COALESCE(users.email, ''), COALESCE(users.username, ''), COUNT(*),
 			COALESCE(SUM(u.request_body_bytes), 0), COALESCE(AVG(u.request_body_bytes), 0), COALESCE(MAX(u.request_body_bytes), 0)
 		FROM usage_logs u
 		LEFT JOIN users ON users.id = u.user_id
-		WHERE u.created_at >= $1 AND u.created_at < $2
+		WHERE u.user_id IN (SELECT user_id FROM top_users)
+		  AND u.created_at >= $4
+		  AND u.created_at < $5
+		  AND u.request_body_bytes > 0
 		GROUP BY 1, 2, 3, 4
-		ORDER BY 1 ASC, 5 DESC
-		LIMIT $3`, dateFormat)
-	rows, err := r.sql.QueryContext(ctx, query, startTime, endTime, limit)
+		ORDER BY 1 ASC, 6 DESC`, dateFormat)
+	rows, err := r.sql.QueryContext(ctx, query, startTime, endTime, limit, startTime, endTime)
 	if err != nil {
 		return nil, err
 	}

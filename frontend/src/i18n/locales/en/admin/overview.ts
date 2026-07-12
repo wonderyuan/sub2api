@@ -39,6 +39,7 @@ export default {
       metricActualCost: 'By Actual Cost',
       tokenUsageTrend: 'Token Usage Trend',
       userUsageTrend: 'User Usage Trend (Top 12)',
+      requestBodyTrend: 'Request Body Size Trend',
       model: 'Model',
       group: 'Group',
       noGroup: 'No Group',

@@ -186,6 +186,7 @@ func (h *APIKeyHandler) Create(c *gin.Context) {
 
 	svcReq := service.CreateAPIKeyRequest{
 		Name:          req.Name,
+		UserID:        req.UserID,
 		GroupID:       req.GroupID,
 		CustomKey:     req.CustomKey,
 		IPWhitelist:   req.IPWhitelist,
