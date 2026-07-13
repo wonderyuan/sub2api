@@ -19,7 +19,59 @@ func setupAccountListRouter() (*gin.Engine, *stubAdminService) {
 	adminSvc := newStubAdminService()
 	handler := NewAccountHandler(adminSvc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	router.GET("/api/v1/admin/accounts", handler.List)
+	router.GET("/api/v1/admin/accounts/usage-windows", handler.ListUsageWindows)
+	router.POST("/api/v1/admin/accounts/usage-windows/refresh", handler.RefreshUsageWindows)
 	return router, adminSvc
+}
+
+func TestAccountHandlerListUsageWindowsUsesStoredSnapshots(t *testing.T) {
+	router, adminSvc := setupAccountListRouter()
+	now := time.Now().UTC()
+	adminSvc.accounts = []service.Account{{
+		ID:       81,
+		Name:     "codex-primary",
+		Platform: service.PlatformOpenAI,
+		Type:     service.AccountTypeOAuth,
+		Status:   service.StatusActive,
+		Extra: map[string]any{
+			"codex_5h_used_percent": 25.0,
+			"codex_5h_reset_at":     now.Add(time.Hour).Format(time.RFC3339),
+			"codex_7d_used_percent": 60.0,
+			"codex_7d_reset_at":     now.Add(24 * time.Hour).Format(time.RFC3339),
+		},
+	}}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts/usage-windows?page=1&page_size=10&search=codex", nil)
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "codex", adminSvc.lastListAccounts.search)
+	require.Equal(t, "name", adminSvc.lastListAccounts.sortBy)
+
+	var payload struct {
+		Data struct {
+			Items []AccountUsageWindowItem `json:"items"`
+			Total int64                    `json:"total"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
+	require.Equal(t, int64(1), payload.Data.Total)
+	require.Len(t, payload.Data.Items, 1)
+	require.Equal(t, "codex-primary", payload.Data.Items[0].Name)
+	require.Equal(t, 25.0, payload.Data.Items[0].FiveHour.Utilization)
+	require.Equal(t, 60.0, payload.Data.Items[0].SevenDay.Utilization)
+	require.True(t, payload.Data.Items[0].SupportsLiveRefresh)
+}
+
+func TestAccountHandlerRefreshUsageWindowsRejectsOversizedBatch(t *testing.T) {
+	router, _ := setupAccountListRouter()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/usage-windows/refresh", strings.NewReader(`{"account_ids":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21]}`))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
 func TestAccountHandlerListIncludesCreatedAt(t *testing.T) {

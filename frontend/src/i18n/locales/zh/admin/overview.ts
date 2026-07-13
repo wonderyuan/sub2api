@@ -76,6 +76,42 @@ export default {
       batchImageDesc: '提交任务、复制 Agent 调用说明',
       groupPricing: '分组定价',
       groupPricingDesc: '设置批量折扣和冻结比例',
+      rateLimits: {
+        title: '速率限额总览',
+        total: '共 {count} 项',
+        aiAccounts: 'AI 账号',
+        apiKeys: 'API Key',
+        account: '账号',
+        apiKey: 'API Key',
+        status: '状态',
+        fiveHour: '5 小时限额',
+        sevenDay: '7 天限额',
+        searchPlaceholder: '搜索名称或用户',
+        liveRefresh: '实时查询上游',
+        liveRefreshHint: '实时查询当前页支持 5 小时/7 天额度的上游 AI 账号',
+        liveSuccess: '已实时更新 {count} 个 AI 账号',
+        livePartial: '实时更新完成：成功 {success} 个，失败 {failed} 个',
+        liveFailed: '实时查询上游失败',
+        loadFailed: '加载速率限额失败',
+        retry: '重试',
+        empty: '没有符合条件的记录',
+        unavailable: '暂无上游数据',
+        unlimited: '不限额',
+        resetsAt: '{time} 重置',
+        userId: '用户 #{id}',
+        statuses: {
+          active: '正常',
+          inactive: '已停用',
+          error: '异常',
+          quota_exhausted: '额度耗尽',
+          expired: '已过期'
+        },
+        refreshErrors: {
+          LIVE_REFRESH_UNSUPPORTED: '该账号不支持实时查询 5 小时/7 天额度',
+          USAGE_SERVICE_UNAVAILABLE: '额度查询服务暂不可用',
+          UPSTREAM_QUERY_FAILED: '上游额度查询失败'
+        }
+      },
       systemSettings: '系统设置',
       configureSystem: '配置系统设置',
       failedToLoad: '加载仪表盘数据失败'

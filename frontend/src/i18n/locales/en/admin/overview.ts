@@ -76,6 +76,42 @@ export default {
       batchImageDesc: 'Submit jobs and copy agent instructions',
       groupPricing: 'Group Pricing',
       groupPricingDesc: 'Configure batch discount and hold ratio',
+      rateLimits: {
+        title: 'Rate Limit Overview',
+        total: '{count} items',
+        aiAccounts: 'AI Accounts',
+        apiKeys: 'API Keys',
+        account: 'Account',
+        apiKey: 'API Key',
+        status: 'Status',
+        fiveHour: '5-hour limit',
+        sevenDay: '7-day limit',
+        searchPlaceholder: 'Search name or owner',
+        liveRefresh: 'Query Upstream',
+        liveRefreshHint: 'Query upstream 5-hour and 7-day usage for supported AI accounts on this page',
+        liveSuccess: 'Updated {count} AI accounts from upstream',
+        livePartial: 'Upstream query finished: {success} succeeded, {failed} failed',
+        liveFailed: 'Failed to query upstream',
+        loadFailed: 'Failed to load rate limits',
+        retry: 'Retry',
+        empty: 'No matching records',
+        unavailable: 'No upstream data',
+        unlimited: 'Unlimited',
+        resetsAt: 'Resets {time}',
+        userId: 'User #{id}',
+        statuses: {
+          active: 'Active',
+          inactive: 'Inactive',
+          error: 'Error',
+          quota_exhausted: 'Quota exhausted',
+          expired: 'Expired'
+        },
+        refreshErrors: {
+          LIVE_REFRESH_UNSUPPORTED: 'This account does not support live 5-hour/7-day queries',
+          USAGE_SERVICE_UNAVAILABLE: 'Usage query service is unavailable',
+          UPSTREAM_QUERY_FAILED: 'Upstream usage query failed'
+        }
+      },
       systemSettings: 'System Settings',
       configureSystem: 'Configure system settings',
       failedToLoad: 'Failed to load dashboard statistics'

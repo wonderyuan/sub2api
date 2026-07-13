@@ -10,6 +10,7 @@ import type {
   UpdateAccountRequest,
   PaginatedResponse,
   AccountUsageInfo,
+  UsageProgress,
   WindowStats,
   ClaudeModel,
   AccountUsageStatsResponse,
@@ -22,6 +23,43 @@ import type {
   CheckMixedChannelRequest,
   CheckMixedChannelResponse
 } from '@/types'
+
+export interface AccountUsageWindowItem {
+  id: number
+  name: string
+  platform: string
+  type: string
+  status: string
+  five_hour: UsageProgress | null
+  seven_day: UsageProgress | null
+  updated_at: string | null
+  supports_live_refresh: boolean
+  refresh_error?: string
+}
+
+export async function listUsageWindows(
+  page: number = 1,
+  pageSize: number = 10,
+  search?: string,
+  options?: { signal?: AbortSignal }
+): Promise<PaginatedResponse<AccountUsageWindowItem>> {
+  const { data } = await apiClient.get<PaginatedResponse<AccountUsageWindowItem>>(
+    '/admin/accounts/usage-windows',
+    {
+      params: { page, page_size: pageSize, search: search || undefined },
+      signal: options?.signal
+    }
+  )
+  return data
+}
+
+export async function refreshUsageWindows(accountIds: number[]): Promise<AccountUsageWindowItem[]> {
+  const { data } = await apiClient.post<AccountUsageWindowItem[]>(
+    '/admin/accounts/usage-windows/refresh',
+    { account_ids: accountIds }
+  )
+  return data
+}
 
 /**
  * List all accounts with pagination
@@ -806,6 +844,8 @@ export async function createSparkShadow(parentId: number, payload: SparkShadowCr
 
 export const accountsAPI = {
   list,
+  listUsageWindows,
+  refreshUsageWindows,
   listWithEtag,
   getById,
   create,
