@@ -97,6 +97,6 @@ func TestGetUserRequestBodyTrend_SelectsTopUsersBeforeTimeBuckets(t *testing.T) 
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	require.Equal(t, int64(7), rows[0].UserID)
-	require.Equal(t, int64(300), rows[0].AvgRequestBodyBytes)
+	require.Equal(t, float64(300), rows[0].AvgRequestBodyBytes)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
