@@ -118,6 +118,14 @@ export async function update(id: number, updates: UpdateApiKeyRequest): Promise<
 }
 
 /**
+ * Regenerate an API key secret while retaining its configuration and usage state.
+ */
+export async function regenerate(id: number): Promise<ApiKey> {
+  const { data } = await apiClient.post<ApiKey>(`/keys/${id}/regenerate`)
+  return data
+}
+
+/**
  * Delete API key
  * @param id - API key ID
  * @returns Success confirmation
@@ -142,6 +150,7 @@ export const keysAPI = {
   getById,
   create,
   update,
+  regenerate,
   delete: deleteKey,
   toggleStatus
 }

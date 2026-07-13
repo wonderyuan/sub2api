@@ -392,6 +392,13 @@
 
           <template v-if="isAdmin" #cell-actions="{ row }">
             <div class="flex items-center gap-1">
+              <button
+                @click="confirmRegenerate(row)"
+                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-orange-50 hover:text-orange-600 dark:hover:bg-orange-900/20 dark:hover:text-orange-400"
+              >
+                <Icon name="refresh" size="sm" />
+                <span class="text-xs">{{ t('keys.regenerateKey') }}</span>
+              </button>
               <!-- Use Key Button -->
               <button
                 @click="openUseKeyModal(row)"
@@ -1026,6 +1033,18 @@
       @cancel="showDeleteDialog = false"
     />
 
+    <ConfirmDialog
+      v-if="isAdmin"
+      :show="showRegenerateDialog"
+      :title="t('keys.regenerateKeyConfirmTitle')"
+      :message="t('keys.regenerateKeyConfirmMessage', { name: selectedKey?.name })"
+      :confirm-text="t('keys.regenerateKey')"
+      :cancel-text="t('common.cancel')"
+      :danger="true"
+      @confirm="handleRegenerate"
+      @cancel="showRegenerateDialog = false"
+    />
+
     <!-- Reset Quota Confirmation Dialog -->
     <ConfirmDialog
       v-if="isAdmin"
@@ -1373,6 +1392,7 @@ const filterGroupId = ref<string | number>('')
 const showCreateModal = ref(false)
 const showEditModal = ref(false)
 const showDeleteDialog = ref(false)
+const showRegenerateDialog = ref(false)
 const showResetQuotaDialog = ref(false)
 const showResetRateLimitDialog = ref(false)
 const showUseKeyModal = ref(false)
@@ -1871,6 +1891,12 @@ const confirmDelete = (key: ApiKey) => {
   showDeleteDialog.value = true
 }
 
+const confirmRegenerate = (key: ApiKey) => {
+  if (!isAdmin.value) return
+  selectedKey.value = key
+  showRegenerateDialog.value = true
+}
+
 const handleSubmit = async () => {
   if (!isAdmin.value) return
   if (!showEditModal.value && !formData.value.user_id) {
@@ -2000,6 +2026,22 @@ const handleDelete = async () => {
   } catch (error: any) {
     // 优先使用后端返回的错误消息，提供更具体的错误信息给用户
     const errorMsg = error?.message || t('keys.failedToDelete')
+    appStore.showError(errorMsg)
+  }
+}
+
+const handleRegenerate = async () => {
+  if (!isAdmin.value || !selectedKey.value) return
+
+  try {
+    const regeneratedKey = await keysAPI.regenerate(selectedKey.value.id)
+    apiKeys.value = apiKeys.value.map((key) => key.id === regeneratedKey.id ? regeneratedKey : key)
+    selectedKey.value = regeneratedKey
+    showRegenerateDialog.value = false
+    showUseKeyModal.value = true
+    appStore.showSuccess(t('keys.keyRegeneratedSuccess'))
+  } catch (error: any) {
+    const errorMsg = error.response?.data?.detail || t('keys.failedToRegenerateKey')
     appStore.showError(errorMsg)
   }
 }

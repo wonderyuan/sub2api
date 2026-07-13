@@ -292,6 +292,32 @@ func (h *APIKeyHandler) Update(c *gin.Context) {
 	response.Success(c, dto.APIKeyFromService(key))
 }
 
+// Regenerate replaces an API key's secret while retaining its configuration and usage state.
+// POST /api/v1/keys/:id/regenerate
+func (h *APIKeyHandler) Regenerate(c *gin.Context) {
+	if _, ok := middleware2.GetAuthSubjectFromContext(c); !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+	if !requireAdminAPIKeyManagement(c) {
+		return
+	}
+
+	keyID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid key ID")
+		return
+	}
+
+	key, err := h.apiKeyService.RegenerateAsAdmin(c.Request.Context(), keyID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	response.Success(c, dto.APIKeyFromService(key))
+}
+
 // Delete handles deleting an API key
 // DELETE /api/v1/api-keys/:id
 func (h *APIKeyHandler) Delete(c *gin.Context) {

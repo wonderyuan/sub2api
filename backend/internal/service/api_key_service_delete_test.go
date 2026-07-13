@@ -30,6 +30,7 @@ type apiKeyRepoStub struct {
 	getByIDErr             error   // GetKeyAndOwnerID 的错误返回值
 	deleteErr              error   // Delete 的错误返回值
 	updateErr              error   // Update 的错误返回值
+	existsByKey            bool
 	deletedIDs             []int64 // 记录已删除的 API Key ID 列表
 	updatedKeys            []APIKey
 	createdKeys            []APIKey
@@ -243,7 +244,7 @@ func (s *apiKeyRepoStub) CountByUserID(ctx context.Context, userID int64) (int64
 }
 
 func (s *apiKeyRepoStub) ExistsByKey(ctx context.Context, key string) (bool, error) {
-	panic("unexpected ExistsByKey call")
+	return s.existsByKey, nil
 }
 
 func (s *apiKeyRepoStub) ListByGroupID(ctx context.Context, groupID int64, params pagination.PaginationParams) ([]APIKey, *pagination.PaginationResult, error) {
@@ -829,4 +830,52 @@ func TestApiKeyService_UpdateAsAdmin_BypassesOwnership(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "renamed-by-admin", key.Name)
 	require.Equal(t, []int64{70}, repo.updateCalls)
+}
+
+func TestAPIKeyService_RegenerateAsAdmin_PreservesUsageAndLimits(t *testing.T) {
+	groupID := int64(7)
+	window5h := time.Now().Add(-time.Hour)
+	window1d := time.Now().Add(-2 * time.Hour)
+	window7d := time.Now().Add(-3 * time.Hour)
+	original := &APIKey{
+		ID:            71,
+		UserID:        10,
+		Key:           "sk-old-secret",
+		Name:          "retain-settings",
+		GroupID:       &groupID,
+		Status:        StatusActive,
+		Quota:         50,
+		QuotaUsed:     12.5,
+		RateLimit5h:   5,
+		RateLimit1d:   10,
+		RateLimit7d:   20,
+		Usage5h:       1.5,
+		Usage1d:       3.5,
+		Usage7d:       7.5,
+		Window5hStart: &window5h,
+		Window1dStart: &window1d,
+		Window7dStart: &window7d,
+		IPWhitelist:   []string{"203.0.113.0/24"},
+		IPBlacklist:   []string{"198.51.100.4"},
+	}
+	repo := &apiKeyRepoStub{apiKey: original}
+	cache := &apiKeyCacheStub{}
+	svc := &APIKeyService{apiKeyRepo: repo, cache: cache}
+
+	regenerated, err := svc.RegenerateAsAdmin(context.Background(), original.ID)
+	require.NoError(t, err)
+	require.NotEqual(t, original.Key, regenerated.Key)
+	require.Len(t, repo.updatedKeys, 1)
+	require.Equal(t, original.Quota, regenerated.Quota)
+	require.Equal(t, original.QuotaUsed, regenerated.QuotaUsed)
+	require.Equal(t, original.RateLimit5h, regenerated.RateLimit5h)
+	require.Equal(t, original.RateLimit1d, regenerated.RateLimit1d)
+	require.Equal(t, original.RateLimit7d, regenerated.RateLimit7d)
+	require.Equal(t, original.Usage5h, regenerated.Usage5h)
+	require.Equal(t, original.Usage1d, regenerated.Usage1d)
+	require.Equal(t, original.Usage7d, regenerated.Usage7d)
+	require.Equal(t, original.Window5hStart, regenerated.Window5hStart)
+	require.Equal(t, original.Window1dStart, regenerated.Window1dStart)
+	require.Equal(t, original.Window7dStart, regenerated.Window7dStart)
+	require.Equal(t, []string{original.Key}, cache.deleteAuthKeys)
 }

@@ -670,6 +670,43 @@ func (s *APIKeyService) UpdateAsAdmin(ctx context.Context, id int64, userID int6
 	return s.updateAPIKey(ctx, id, userID, req, true)
 }
 
+// RegenerateAsAdmin replaces an API key's secret without changing its billing,
+// rate-limit, ownership, or access configuration. The old secret is invalidated
+// immediately through the authentication cache.
+func (s *APIKeyService) RegenerateAsAdmin(ctx context.Context, id int64) (*APIKey, error) {
+	apiKey, err := s.apiKeyRepo.GetByID(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("get api key: %w", err)
+	}
+
+	oldKey := apiKey.Key
+	for attempts := 0; attempts < 5; attempts++ {
+		newKey, err := s.GenerateKey()
+		if err != nil {
+			return nil, err
+		}
+
+		exists, err := s.apiKeyRepo.ExistsByKey(ctx, newKey)
+		if err != nil {
+			return nil, fmt.Errorf("check generated api key: %w", err)
+		}
+		if exists {
+			continue
+		}
+
+		apiKey.Key = newKey
+		if err := s.apiKeyRepo.Update(ctx, apiKey); err != nil {
+			return nil, fmt.Errorf("regenerate api key: %w", err)
+		}
+
+		s.InvalidateAuthCacheByKey(ctx, oldKey)
+		s.compileAPIKeyIPRules(apiKey)
+		return apiKey, nil
+	}
+
+	return nil, fmt.Errorf("generate a unique api key: %w", ErrAPIKeyExists)
+}
+
 func (s *APIKeyService) updateAPIKey(ctx context.Context, id int64, userID int64, req UpdateAPIKeyRequest, isAdmin bool) (*APIKey, error) {
 	apiKey, err := s.apiKeyRepo.GetByID(ctx, id)
 	if err != nil {
