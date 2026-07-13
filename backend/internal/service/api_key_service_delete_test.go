@@ -877,5 +877,5 @@ func TestAPIKeyService_RegenerateAsAdmin_PreservesUsageAndLimits(t *testing.T) {
 	require.Equal(t, original.Window5hStart, regenerated.Window5hStart)
 	require.Equal(t, original.Window1dStart, regenerated.Window1dStart)
 	require.Equal(t, original.Window7dStart, regenerated.Window7dStart)
-	require.Equal(t, []string{original.Key}, cache.deleteAuthKeys)
+	require.Equal(t, []string{svc.authCacheKey(original.Key)}, cache.deleteAuthKeys)
 }
