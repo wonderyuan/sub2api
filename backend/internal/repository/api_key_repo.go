@@ -231,6 +231,7 @@ func (r *apiKeyRepository) Update(ctx context.Context, key *service.APIKey) erro
 	now := time.Now()
 	builder := client.APIKey.Update().
 		Where(apikey.IDEQ(key.ID), apikey.DeletedAtIsNil()).
+		SetKey(key.Key).
 		SetName(key.Name).
 		SetStatus(key.Status).
 		SetQuota(key.Quota).
