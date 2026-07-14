@@ -701,6 +701,10 @@ func apiKeyListOrder(params pagination.PaginationParams) []func(*entsql.Selector
 		field = apikey.FieldExpiresAt
 	case "last_used_at":
 		field = apikey.FieldLastUsedAt
+	case "usage_5h":
+		field = apikey.FieldUsage5h
+	case "usage_7d":
+		field = apikey.FieldUsage7d
 	case "created_at":
 		field = apikey.FieldCreatedAt
 	case "id":

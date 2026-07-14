@@ -99,6 +99,8 @@ export default {
         unlimited: '不限额',
         resetsAt: '{time} 重置',
         userId: '用户 #{id}',
+        keyCount: '{count} 个 API Key',
+        groupUsage: '7 天合计 {amount}',
         statuses: {
           active: '正常',
           inactive: '已停用',

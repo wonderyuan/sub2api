@@ -164,44 +164,73 @@
       </template>
 
       <template v-else>
-      <div
-        v-for="item in keyItems"
-        :key="item.id"
-        class="grid data-cols gap-3 px-4 py-3.5 transition-colors hover:bg-gray-50/70 dark:hover:bg-dark-700/30"
-        data-testid="key-row"
+      <section
+        v-for="group in keyGroups"
+        :key="group.userId"
+        data-testid="key-group"
+        class="divide-y divide-gray-100 dark:divide-dark-700/70"
       >
-        <div class="min-w-0">
-          <p class="truncate text-sm font-semibold text-gray-900 dark:text-white" :title="item.name">
-            {{ item.name }}
-          </p>
-          <p class="mt-1 truncate text-xs text-gray-500 dark:text-gray-400" :title="ownerTitle(item)">
-            {{ ownerLabel(item) }}
-          </p>
-        </div>
-        <div class="flex items-start md:items-center">
-          <span class="rounded-md px-2 py-1 text-[11px] font-medium" :class="statusClass(item.status)">
-            {{ statusLabel(item.status) }}
+        <div class="flex min-w-0 flex-col gap-2 bg-gray-50/80 px-4 py-2.5 dark:bg-dark-800/70 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+          <div class="flex min-w-0 items-center gap-2">
+            <span class="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md bg-white text-gray-500 shadow-sm dark:bg-dark-700 dark:text-gray-300">
+              <Icon name="user" size="xs" />
+            </span>
+            <div class="min-w-0">
+              <p
+                data-testid="key-group-owner"
+                class="truncate text-xs font-semibold text-gray-800 dark:text-gray-100"
+                :title="group.ownerTitle"
+              >
+                {{ group.owner }}
+              </p>
+              <p class="text-[11px] text-gray-400 dark:text-gray-500">
+                {{ t('admin.dashboard.rateLimits.keyCount', { count: group.items.length }) }}
+              </p>
+            </div>
+          </div>
+          <span
+            data-testid="key-group-usage"
+            class="text-xs font-semibold text-gray-600 dark:text-gray-300 sm:flex-shrink-0"
+          >
+            {{ t('admin.dashboard.rateLimits.groupUsage', { amount: formatUsd(group.usage7d) }) }}
           </span>
         </div>
-        <div>
-          <p class="mb-1 text-[11px] font-medium text-gray-400 md:hidden">{{ t('admin.dashboard.rateLimits.fiveHour') }}</p>
-          <RateLimitGauge
-            :utilization="keyUtilization(item.usage_5h, item.rate_limit_5h)"
-            :summary="formatKeyUsage(item.usage_5h, item.rate_limit_5h)"
-            :resets-at="item.reset_5h_at"
-            :unlimited="item.rate_limit_5h <= 0"
-          />
+        <div
+          v-for="item in group.items"
+          :key="item.id"
+          class="grid data-cols gap-3 px-4 py-3.5 transition-colors hover:bg-gray-50/70 dark:hover:bg-dark-700/30"
+          data-testid="key-row"
+        >
+          <div class="min-w-0">
+            <p class="truncate text-sm font-semibold text-gray-900 dark:text-white" :title="item.name">
+              {{ item.name }}
+            </p>
+          </div>
+          <div class="flex items-start md:items-center">
+            <span class="rounded-md px-2 py-1 text-[11px] font-medium" :class="statusClass(item.status)">
+              {{ statusLabel(item.status) }}
+            </span>
+          </div>
+          <div>
+            <p class="mb-1 text-[11px] font-medium text-gray-400 md:hidden">{{ t('admin.dashboard.rateLimits.fiveHour') }}</p>
+            <RateLimitGauge
+              :utilization="keyUtilization(item.usage_5h, item.rate_limit_5h)"
+              :summary="formatKeyUsage(item.usage_5h, item.rate_limit_5h)"
+              :resets-at="item.reset_5h_at"
+              :unlimited="item.rate_limit_5h <= 0"
+            />
+          </div>
+          <div>
+            <p class="mb-1 text-[11px] font-medium text-gray-400 md:hidden">{{ t('admin.dashboard.rateLimits.sevenDay') }}</p>
+            <RateLimitGauge
+              :utilization="keyUtilization(item.usage_7d, item.rate_limit_7d)"
+              :summary="formatKeyUsage(item.usage_7d, item.rate_limit_7d)"
+              :resets-at="item.reset_7d_at"
+              :unlimited="item.rate_limit_7d <= 0"
+            />
+          </div>
         </div>
-        <div>
-          <p class="mb-1 text-[11px] font-medium text-gray-400 md:hidden">{{ t('admin.dashboard.rateLimits.sevenDay') }}</p>
-          <RateLimitGauge
-            :utilization="keyUtilization(item.usage_7d, item.rate_limit_7d)"
-            :summary="formatKeyUsage(item.usage_7d, item.rate_limit_7d)"
-            :resets-at="item.reset_7d_at"
-            :unlimited="item.rate_limit_7d <= 0"
-          />
-        </div>
-      </div>
+      </section>
       </template>
     </div>
 
@@ -232,6 +261,15 @@ import RateLimitGauge from './RateLimitGauge.vue'
 
 type PanelTab = 'accounts' | 'keys'
 
+interface ApiKeyOwnerGroup {
+  userId: number
+  owner: string
+  ownerTitle: string
+  usage5h: number
+  usage7d: number
+  items: ApiKey[]
+}
+
 const { t } = useI18n()
 const pageSize = 10
 const activeTab = ref<PanelTab>('accounts')
@@ -261,6 +299,39 @@ const activeTotal = computed(() => activeTab.value === 'accounts' ? accountTotal
 const activePage = computed(() => activeTab.value === 'accounts' ? accountPage.value : keyPage.value)
 const activeLoading = computed(() => activeTab.value === 'accounts' ? accountLoading.value : keyLoading.value)
 const activeError = computed(() => activeTab.value === 'accounts' ? accountError.value : keyError.value)
+const keyGroups = computed<ApiKeyOwnerGroup[]>(() => {
+  const groups = new Map<number, ApiKeyOwnerGroup>()
+
+  for (const key of keyItems.value) {
+    let group = groups.get(key.user_id)
+    if (!group) {
+      group = {
+        userId: key.user_id,
+        owner: ownerLabel(key),
+        ownerTitle: ownerTitle(key),
+        usage5h: 0,
+        usage7d: 0,
+        items: []
+      }
+      groups.set(key.user_id, group)
+    }
+    group.usage5h += key.usage_5h
+    group.usage7d += key.usage_7d
+    group.items.push(key)
+  }
+
+  return Array.from(groups.values())
+    .map((group) => ({
+      ...group,
+      items: [...group.items].sort(compareKeyUsage)
+    }))
+    .sort((a, b) =>
+      b.usage7d - a.usage7d
+      || b.usage5h - a.usage5h
+      || a.owner.localeCompare(b.owner)
+      || a.userId - b.userId
+    )
+})
 const activeSearch = computed({
   get: () => activeTab.value === 'accounts' ? accountSearch.value : keySearch.value,
   set: (value: string) => {
@@ -307,7 +378,7 @@ async function loadKeys(): Promise<void> {
     const response = await keysAPI.list(
       keyPage.value,
       pageSize,
-      { search: keySearch.value.trim() || undefined, sort_by: 'name', sort_order: 'asc' },
+      { search: keySearch.value.trim() || undefined, sort_by: 'usage_7d', sort_order: 'desc' },
       { signal: controller.signal }
     )
     if (keyController !== controller) return
@@ -379,6 +450,13 @@ function formatKeyUsage(used: number, limit: number): string {
 function keyUtilization(used: number, limit: number): number | null {
   if (limit <= 0) return null
   return (used / limit) * 100
+}
+
+function compareKeyUsage(a: ApiKey, b: ApiKey): number {
+  return b.usage_7d - a.usage_7d
+    || b.usage_5h - a.usage_5h
+    || a.name.localeCompare(b.name)
+    || a.id - b.id
 }
 
 function ownerLabel(key: ApiKey): string {
