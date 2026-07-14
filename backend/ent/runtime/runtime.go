@@ -1940,12 +1940,16 @@ func init() {
 	usagelogDescRateMultiplier := usagelogFields[25].Descriptor()
 	// usagelog.DefaultRateMultiplier holds the default value on creation for the rate_multiplier field.
 	usagelog.DefaultRateMultiplier = usagelogDescRateMultiplier.Default.(float64)
+	// usagelogDescLongContextBillingApplied is the schema descriptor for long_context_billing_applied field.
+	usagelogDescLongContextBillingApplied := usagelogFields[26].Descriptor()
+	// usagelog.DefaultLongContextBillingApplied holds the default value on creation for the long_context_billing_applied field.
+	usagelog.DefaultLongContextBillingApplied = usagelogDescLongContextBillingApplied.Default.(bool)
 	// usagelogDescBillingType is the schema descriptor for billing_type field.
-	usagelogDescBillingType := usagelogFields[27].Descriptor()
+	usagelogDescBillingType := usagelogFields[28].Descriptor()
 	// usagelog.DefaultBillingType holds the default value on creation for the billing_type field.
 	usagelog.DefaultBillingType = usagelogDescBillingType.Default.(int8)
 	// usagelogDescStream is the schema descriptor for stream field.
-	usagelogDescStream := usagelogFields[28].Descriptor()
+	usagelogDescStream := usagelogFields[29].Descriptor()
 	// usagelog.DefaultStream holds the default value on creation for the stream field.
 	usagelog.DefaultStream = usagelogDescStream.Default.(bool)
 	// usagelogDescRequestBodyBytes is the schema descriptor for request_body_bytes field.
