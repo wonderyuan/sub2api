@@ -40,7 +40,7 @@ func TestUsageLogRepositoryCreateSyncRequestTypeAndLegacyFields(t *testing.T) {
 		CreatedAt:        createdAt,
 	}
 
-	mock.ExpectQuery("INSERT INTO usage_logs").
+	mock.ExpectQuery(`(?s)INSERT INTO usage_logs.*\$55`).
 		WithArgs(
 			log.UserID,
 			log.APIKeyID,
