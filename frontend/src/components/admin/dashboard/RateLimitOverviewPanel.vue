@@ -173,7 +173,7 @@
         <div class="flex min-w-0 flex-col gap-2 bg-gray-50/80 px-4 py-2 dark:bg-dark-800/70 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
           <div class="flex min-w-0 items-center gap-2">
             <span class="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md bg-white text-gray-500 shadow-sm dark:bg-dark-700 dark:text-gray-300">
-              <Icon name="folder" size="xs" />
+              <Icon name="grid" size="xs" />
             </span>
             <div class="min-w-0">
               <p
