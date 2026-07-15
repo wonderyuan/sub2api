@@ -1,10 +1,10 @@
 <template>
   <section class="card overflow-hidden" data-testid="rate-limit-overview">
-    <div class="border-b border-gray-100 p-4 dark:border-dark-700/70">
-      <div class="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+    <div class="border-b border-gray-100 px-4 py-3 dark:border-dark-700/70">
+      <div class="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
         <div class="min-w-0">
           <div class="flex items-center gap-2">
-            <span class="flex h-8 w-8 items-center justify-center rounded-lg bg-teal-100 text-teal-600 dark:bg-teal-900/30 dark:text-teal-400">
+            <span class="flex h-7 w-7 items-center justify-center rounded-md bg-teal-100 text-teal-600 dark:bg-teal-900/30 dark:text-teal-400">
               <Icon name="chartBar" size="sm" :stroke-width="2" />
             </span>
             <div>
@@ -18,7 +18,7 @@
           </div>
         </div>
 
-        <div class="flex flex-col gap-3 sm:flex-row sm:items-center">
+        <div class="flex flex-col gap-2 sm:flex-row sm:items-center">
           <div class="inline-flex h-9 rounded-lg bg-gray-100 p-1 dark:bg-dark-700" role="tablist">
             <button
               type="button"
@@ -45,7 +45,7 @@
           </div>
 
           <div class="flex min-w-0 items-center gap-2">
-            <div class="min-w-0 flex-1 sm:w-56 sm:flex-none">
+            <div class="min-w-0 flex-1 sm:w-52 sm:flex-none">
               <SearchInput
                 v-model="activeSearch"
                 :placeholder="t('admin.dashboard.rateLimits.searchPlaceholder')"
@@ -92,7 +92,7 @@
       </div>
     </div>
 
-    <div class="grid hidden-cols border-b border-gray-100 bg-gray-50/70 px-4 py-2.5 text-[11px] font-semibold uppercase text-gray-500 dark:border-dark-700/70 dark:bg-dark-800/70 dark:text-gray-400 md:grid">
+    <div class="grid hidden-cols border-b border-gray-100 bg-gray-50/70 px-4 py-2 text-[11px] font-semibold uppercase text-gray-500 dark:border-dark-700/70 dark:bg-dark-800/70 dark:text-gray-400 md:grid">
       <span>{{ activeTab === 'accounts' ? t('admin.dashboard.rateLimits.account') : t('admin.dashboard.rateLimits.apiKey') }}</span>
       <span>{{ t('admin.dashboard.rateLimits.status') }}</span>
       <span>{{ t('admin.dashboard.rateLimits.fiveHour') }}</span>
@@ -166,68 +166,98 @@
       <template v-else>
       <section
         v-for="group in keyGroups"
-        :key="group.userId"
+        :key="group.key"
         data-testid="key-group"
         class="divide-y divide-gray-100 dark:divide-dark-700/70"
       >
-        <div class="flex min-w-0 flex-col gap-2 bg-gray-50/80 px-4 py-2.5 dark:bg-dark-800/70 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+        <div class="flex min-w-0 flex-col gap-2 bg-gray-50/80 px-4 py-2 dark:bg-dark-800/70 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
           <div class="flex min-w-0 items-center gap-2">
             <span class="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md bg-white text-gray-500 shadow-sm dark:bg-dark-700 dark:text-gray-300">
-              <Icon name="user" size="xs" />
+              <Icon name="folder" size="xs" />
             </span>
             <div class="min-w-0">
               <p
                 data-testid="key-group-owner"
                 class="truncate text-xs font-semibold text-gray-800 dark:text-gray-100"
-                :title="group.ownerTitle"
+                :title="group.title"
               >
-                {{ group.owner }}
+                {{ group.name }}
               </p>
               <p class="text-[11px] text-gray-400 dark:text-gray-500">
                 {{ t('admin.dashboard.rateLimits.keyCount', { count: group.items.length }) }}
               </p>
             </div>
           </div>
-          <span
-            data-testid="key-group-usage"
-            class="text-xs font-semibold text-gray-600 dark:text-gray-300 sm:flex-shrink-0"
-          >
-            {{ t('admin.dashboard.rateLimits.groupUsage', { amount: formatUsd(group.usage7d) }) }}
+          <span class="text-xs font-medium text-gray-500 dark:text-gray-400 sm:flex-shrink-0">
+            {{ t('admin.dashboard.rateLimits.recentlyActive', { count: group.activeCount }) }}
           </span>
         </div>
         <div
           v-for="item in group.items"
           :key="item.id"
-          class="grid data-cols gap-3 px-4 py-3.5 transition-colors hover:bg-gray-50/70 dark:hover:bg-dark-700/30"
+          class="grid data-cols gap-3 px-4 py-2.5 transition-colors hover:bg-gray-50/70 dark:hover:bg-dark-700/30"
           data-testid="key-row"
         >
-          <div class="min-w-0">
-            <p class="truncate text-sm font-semibold text-gray-900 dark:text-white" :title="item.name">
-              {{ item.name }}
-            </p>
+          <div class="flex min-w-0 items-center gap-2">
+            <span
+              data-testid="key-activity"
+              class="h-2 w-2 flex-shrink-0 rounded-full"
+              :class="isKeyActive(item) ? 'bg-emerald-500 ring-4 ring-emerald-500/10' : 'bg-gray-300 dark:bg-dark-500'"
+              :title="isKeyActive(item) ? t('admin.dashboard.rateLimits.activeWithinFiveMinutes') : t('admin.dashboard.rateLimits.inactiveWithinFiveMinutes')"
+            ></span>
+            <div class="min-w-0">
+              <p class="truncate text-sm font-semibold text-gray-900 dark:text-white" :title="item.name">
+                {{ item.name }}
+              </p>
+              <p class="truncate text-[11px] text-gray-400 dark:text-gray-500" :title="ownerTitle(item)">
+                {{ ownerLabel(item) }}
+              </p>
+            </div>
           </div>
           <div class="flex items-start md:items-center">
             <span class="rounded-md px-2 py-1 text-[11px] font-medium" :class="statusClass(item.status)">
               {{ statusLabel(item.status) }}
             </span>
           </div>
-          <div>
+          <div class="min-w-0">
             <p class="mb-1 text-[11px] font-medium text-gray-400 md:hidden">{{ t('admin.dashboard.rateLimits.fiveHour') }}</p>
-            <RateLimitGauge
-              :utilization="keyUtilization(item.usage_5h, item.rate_limit_5h)"
-              :summary="formatKeyUsage(item.usage_5h, item.rate_limit_5h)"
-              :resets-at="item.reset_5h_at"
-              :unlimited="item.rate_limit_5h <= 0"
-            />
+            <div v-if="item.rate_limit_5h > 0" class="min-w-0">
+              <div class="flex items-center justify-between gap-2 text-xs">
+                <span class="truncate font-medium text-gray-700 dark:text-gray-200">{{ formatKeyUsage(item.usage_5h, item.rate_limit_5h) }}</span>
+                <span class="flex-shrink-0 text-gray-400">{{ formatPercent(keyUtilization(item.usage_5h, item.rate_limit_5h)) }}</span>
+              </div>
+              <div class="mt-1 h-1.5 overflow-hidden rounded-full bg-gray-100 dark:bg-dark-700">
+                <div class="h-full rounded-full" :class="utilizationClass(keyUtilization(item.usage_5h, item.rate_limit_5h))" :style="{ width: `${clampedUtilization(keyUtilization(item.usage_5h, item.rate_limit_5h))}%` }"></div>
+              </div>
+              <p
+                v-if="item.reset_5h_at"
+                class="mt-0.5 truncate text-[10px] leading-4 text-gray-400 dark:text-gray-500"
+                :title="formatDateTime(item.reset_5h_at)"
+              >
+                {{ t('admin.dashboard.rateLimits.resetsAt', { time: formatDateTime(item.reset_5h_at) }) }}
+              </p>
+            </div>
+            <span v-else class="text-xs text-gray-400 dark:text-gray-500">{{ t('admin.dashboard.rateLimits.unlimited') }}</span>
           </div>
-          <div>
+          <div class="min-w-0">
             <p class="mb-1 text-[11px] font-medium text-gray-400 md:hidden">{{ t('admin.dashboard.rateLimits.sevenDay') }}</p>
-            <RateLimitGauge
-              :utilization="keyUtilization(item.usage_7d, item.rate_limit_7d)"
-              :summary="formatKeyUsage(item.usage_7d, item.rate_limit_7d)"
-              :resets-at="item.reset_7d_at"
-              :unlimited="item.rate_limit_7d <= 0"
-            />
+            <div v-if="item.rate_limit_7d > 0" class="min-w-0">
+              <div class="flex items-center justify-between gap-2 text-xs">
+                <span class="truncate font-medium text-gray-700 dark:text-gray-200">{{ formatKeyUsage(item.usage_7d, item.rate_limit_7d) }}</span>
+                <span class="flex-shrink-0 text-gray-400">{{ formatPercent(keyUtilization(item.usage_7d, item.rate_limit_7d)) }}</span>
+              </div>
+              <div class="mt-1 h-1.5 overflow-hidden rounded-full bg-gray-100 dark:bg-dark-700">
+                <div class="h-full rounded-full" :class="utilizationClass(keyUtilization(item.usage_7d, item.rate_limit_7d))" :style="{ width: `${clampedUtilization(keyUtilization(item.usage_7d, item.rate_limit_7d))}%` }"></div>
+              </div>
+              <p
+                v-if="item.reset_7d_at"
+                class="mt-0.5 truncate text-[10px] leading-4 text-gray-400 dark:text-gray-500"
+                :title="formatDateTime(item.reset_7d_at)"
+              >
+                {{ t('admin.dashboard.rateLimits.resetsAt', { time: formatDateTime(item.reset_7d_at) }) }}
+              </p>
+            </div>
+            <span v-else class="text-xs text-gray-400 dark:text-gray-500">{{ t('admin.dashboard.rateLimits.unlimited') }}</span>
           </div>
         </div>
       </section>
@@ -235,10 +265,10 @@
     </div>
 
     <Pagination
-      v-if="activeTotal > pageSize"
+      v-if="activeTotal > activePageSize"
       :total="activeTotal"
       :page="activePage"
-      :page-size="pageSize"
+      :page-size="activePageSize"
       :show-page-size-selector="false"
       @update:page="changePage"
     />
@@ -261,18 +291,19 @@ import RateLimitGauge from './RateLimitGauge.vue'
 
 type PanelTab = 'accounts' | 'keys'
 
-interface ApiKeyOwnerGroup {
-  userId: number
-  owner: string
-  ownerTitle: string
-  usage5h: number
-  usage7d: number
+interface ApiKeyRateLimitGroup {
+  key: string
+  id: number | null
+  name: string
+  title: string
+  activeCount: number
   items: ApiKey[]
 }
 
 const { t } = useI18n()
-const pageSize = 10
-const activeTab = ref<PanelTab>('accounts')
+const accountPageSize = 10
+const keyPageSize = 1000
+const activeTab = ref<PanelTab>('keys')
 const accountItems = ref<AccountUsageWindowItem[]>([])
 const keyItems = ref<ApiKey[]>([])
 const accountTotal = ref(0)
@@ -289,34 +320,41 @@ const accountError = ref('')
 const keyError = ref('')
 const liveRefreshing = ref(false)
 const liveMessage = ref('')
+const activityNow = ref(Date.now())
 let accountController: AbortController | null = null
 let keyController: AbortController | null = null
+let activityTimer: ReturnType<typeof setInterval> | null = null
 
 const activeTabClass = 'bg-white text-gray-900 shadow-sm dark:bg-dark-600 dark:text-white'
 const inactiveTabClass = 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'
 const activeItems = computed(() => activeTab.value === 'accounts' ? accountItems.value : keyItems.value)
 const activeTotal = computed(() => activeTab.value === 'accounts' ? accountTotal.value : keyTotal.value)
 const activePage = computed(() => activeTab.value === 'accounts' ? accountPage.value : keyPage.value)
+const activePageSize = computed(() => activeTab.value === 'accounts' ? accountPageSize : keyPageSize)
 const activeLoading = computed(() => activeTab.value === 'accounts' ? accountLoading.value : keyLoading.value)
 const activeError = computed(() => activeTab.value === 'accounts' ? accountError.value : keyError.value)
-const keyGroups = computed<ApiKeyOwnerGroup[]>(() => {
-  const groups = new Map<number, ApiKeyOwnerGroup>()
+const keyGroups = computed<ApiKeyRateLimitGroup[]>(() => {
+  const groups = new Map<string, ApiKeyRateLimitGroup>()
 
   for (const key of keyItems.value) {
-    let group = groups.get(key.user_id)
+    const groupID = key.group_id ?? null
+    const groupKey = groupID === null ? 'unassigned' : `group-${groupID}`
+    const groupName = key.group?.name?.trim() || t('admin.dashboard.rateLimits.unassignedGroup')
+    let group = groups.get(groupKey)
     if (!group) {
       group = {
-        userId: key.user_id,
-        owner: ownerLabel(key),
-        ownerTitle: ownerTitle(key),
-        usage5h: 0,
-        usage7d: 0,
+        key: groupKey,
+        id: groupID,
+        name: groupName,
+        title: groupID === null
+          ? t('admin.dashboard.rateLimits.unassignedGroup')
+          : `${groupName} #${groupID}`,
+        activeCount: 0,
         items: []
       }
-      groups.set(key.user_id, group)
+      groups.set(groupKey, group)
     }
-    group.usage5h += key.usage_5h
-    group.usage7d += key.usage_7d
+    if (isKeyActive(key)) group.activeCount += 1
     group.items.push(key)
   }
 
@@ -325,12 +363,7 @@ const keyGroups = computed<ApiKeyOwnerGroup[]>(() => {
       ...group,
       items: [...group.items].sort(compareKeyUsage)
     }))
-    .sort((a, b) =>
-      b.usage7d - a.usage7d
-      || b.usage5h - a.usage5h
-      || a.owner.localeCompare(b.owner)
-      || a.userId - b.userId
-    )
+    .sort((a, b) => a.name.localeCompare(b.name) || (a.id ?? Number.MAX_SAFE_INTEGER) - (b.id ?? Number.MAX_SAFE_INTEGER))
 })
 const activeSearch = computed({
   get: () => activeTab.value === 'accounts' ? accountSearch.value : keySearch.value,
@@ -351,7 +384,7 @@ async function loadAccounts(): Promise<void> {
   try {
     const response = await adminAPI.accounts.listUsageWindows(
       accountPage.value,
-      pageSize,
+      accountPageSize,
       accountSearch.value.trim(),
       { signal: controller.signal }
     )
@@ -377,8 +410,8 @@ async function loadKeys(): Promise<void> {
   try {
     const response = await keysAPI.list(
       keyPage.value,
-      pageSize,
-      { search: keySearch.value.trim() || undefined, sort_by: 'usage_7d', sort_order: 'desc' },
+      keyPageSize,
+      { search: keySearch.value.trim() || undefined, sort_by: 'id', sort_order: 'asc' },
       { signal: controller.signal }
     )
     if (keyController !== controller) return
@@ -453,10 +486,39 @@ function keyUtilization(used: number, limit: number): number | null {
 }
 
 function compareKeyUsage(a: ApiKey, b: ApiKey): number {
-  return b.usage_7d - a.usage_7d
-    || b.usage_5h - a.usage_5h
+  return keySortUtilization(b) - keySortUtilization(a)
+    || (keyUtilization(b.usage_7d, b.rate_limit_7d) ?? -1) - (keyUtilization(a.usage_7d, a.rate_limit_7d) ?? -1)
+    || (keyUtilization(b.usage_5h, b.rate_limit_5h) ?? -1) - (keyUtilization(a.usage_5h, a.rate_limit_5h) ?? -1)
     || a.name.localeCompare(b.name)
     || a.id - b.id
+}
+
+function keySortUtilization(key: ApiKey): number {
+  return Math.max(
+    keyUtilization(key.usage_5h, key.rate_limit_5h) ?? -1,
+    keyUtilization(key.usage_7d, key.rate_limit_7d) ?? -1
+  )
+}
+
+function isKeyActive(key: ApiKey): boolean {
+  if (!key.last_used_at) return false
+  const lastUsedAt = Date.parse(key.last_used_at)
+  return Number.isFinite(lastUsedAt) && activityNow.value - lastUsedAt <= 5 * 60 * 1000
+}
+
+function clampedUtilization(value: number | null): number {
+  return Math.min(100, Math.max(0, value ?? 0))
+}
+
+function utilizationClass(value: number | null): string {
+  if ((value ?? 0) >= 90) return 'bg-red-500'
+  if ((value ?? 0) >= 70) return 'bg-amber-500'
+  return 'bg-emerald-500'
+}
+
+function formatPercent(value: number | null): string {
+  if (value === null) return '—'
+  return `${value.toFixed(Number.isInteger(value) ? 0 : 1)}%`
 }
 
 function ownerLabel(key: ApiKey): string {
@@ -476,7 +538,7 @@ function statusLabel(status: string): string {
 
 function statusClass(status: string): string {
   if (status === 'active') return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
-  if (status === 'error' || status === 'quota_exhausted' || status === 'expired') {
+  if (status === 'error' || status === 'disabled' || status === 'quota_exhausted' || status === 'expired') {
     return 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'
   }
   return 'bg-gray-100 text-gray-600 dark:bg-dark-700 dark:text-gray-300'
@@ -488,10 +550,17 @@ function refreshErrorLabel(errorCode: string): string {
   return translated === key ? t('admin.dashboard.rateLimits.liveFailed') : translated
 }
 
-onMounted(() => void loadAccounts())
+onMounted(() => {
+  activityNow.value = Date.now()
+  activityTimer = setInterval(() => {
+    activityNow.value = Date.now()
+  }, 30_000)
+  void loadKeys()
+})
 onBeforeUnmount(() => {
   accountController?.abort()
   keyController?.abort()
+  if (activityTimer !== null) clearInterval(activityTimer)
 })
 </script>
 

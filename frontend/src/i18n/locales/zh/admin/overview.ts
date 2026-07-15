@@ -99,11 +99,17 @@ export default {
         unlimited: '不限额',
         resetsAt: '{time} 重置',
         userId: '用户 #{id}',
+        groupId: '分组 #{id}',
+        unassignedGroup: '未分配分组',
         keyCount: '{count} 个 API Key',
         groupUsage: '7 天合计 {amount}',
+        recentlyActive: '5 分钟内活跃 {count} 个',
+        activeWithinFiveMinutes: '最近 5 分钟内有活跃请求',
+        inactiveWithinFiveMinutes: '最近 5 分钟内无活跃请求',
         statuses: {
           active: '正常',
           inactive: '已停用',
+          disabled: '已禁用',
           error: '异常',
           quota_exhausted: '额度耗尽',
           expired: '已过期'

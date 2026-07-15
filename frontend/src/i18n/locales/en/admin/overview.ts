@@ -99,11 +99,17 @@ export default {
         unlimited: 'Unlimited',
         resetsAt: 'Resets {time}',
         userId: 'User #{id}',
+        groupId: 'Group #{id}',
+        unassignedGroup: 'Unassigned group',
         keyCount: '{count} API keys',
         groupUsage: '7-day total {amount}',
+        recentlyActive: '{count} active in 5 min',
+        activeWithinFiveMinutes: 'Active within the last 5 minutes',
+        inactiveWithinFiveMinutes: 'No activity in the last 5 minutes',
         statuses: {
           active: 'Active',
           inactive: 'Inactive',
+          disabled: 'Disabled',
           error: 'Error',
           quota_exhausted: 'Quota exhausted',
           expired: 'Expired'

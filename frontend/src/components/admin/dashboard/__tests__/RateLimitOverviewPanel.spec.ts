@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import type { ApiKey } from '@/types'
 import RateLimitOverviewPanel from '../RateLimitOverviewPanel.vue'
@@ -58,6 +58,9 @@ const apiKey = {
   usage_7d: 40,
   reset_5h_at: null,
   reset_7d_at: null,
+  last_used_at: new Date().toISOString(),
+  group_id: 3,
+  group: { id: 3, name: 'Production', platform: 'openai' },
   user: { id: 7, username: 'yuan', email: 'yuan@example.com', role: 'user', status: 'active' }
 } as ApiKey
 
@@ -76,6 +79,8 @@ const otherOwnerApiKey = {
   name: 'Team Key',
   usage_5h: 15,
   usage_7d: 60,
+  group_id: 4,
+  group: { id: 4, name: 'Staging', platform: 'openai' },
   user: { id: 8, username: 'alice', email: 'alice@example.com', role: 'user', status: 'active' }
 } as ApiKey
 
@@ -100,8 +105,15 @@ describe('RateLimitOverviewPanel', () => {
     ])
   })
 
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
   it('shows account windows and refreshes supported accounts from upstream', async () => {
     const wrapper = mount(RateLimitOverviewPanel)
+    await flushPromises()
+
+    await wrapper.get('[data-testid="accounts-tab"]').trigger('click')
     await flushPromises()
 
     expect(wrapper.text()).toContain('Codex Primary')
@@ -115,32 +127,59 @@ describe('RateLimitOverviewPanel', () => {
     expect(wrapper.text()).toContain('91%')
   })
 
-  it('groups API keys by owner and sorts groups and keys by usage', async () => {
+  it('groups API keys by assigned group, sorts keys by utilization, and marks recent activity', async () => {
     const wrapper = mount(RateLimitOverviewPanel)
-    await flushPromises()
-
-    await wrapper.get('[data-testid="keys-tab"]').trigger('click')
     await flushPromises()
 
     expect(listKeys).toHaveBeenCalledWith(
       1,
-      10,
-      expect.objectContaining({ sort_by: 'usage_7d', sort_order: 'desc' }),
+      1000,
+      expect.objectContaining({ sort_by: 'id', sort_order: 'asc' }),
       expect.objectContaining({ signal: expect.any(AbortSignal) })
     )
 
     const groups = wrapper.findAll('[data-testid="key-group"]')
     expect(groups).toHaveLength(2)
-    expect(groups[0].get('[data-testid="key-group-owner"]').text()).toBe('yuan')
-    expect(groups[0].get('[data-testid="key-group-usage"]').text()).toContain('$110.00')
+    expect(groups[0].get('[data-testid="key-group-owner"]').text()).toBe('Production')
     expect(groups[0].findAll('[data-testid="key-row"]').map((row) => row.text())).toEqual([
       expect.stringContaining('High Usage Key'),
       expect.stringContaining('Production Key')
     ])
-    expect(groups[1].get('[data-testid="key-group-owner"]').text()).toBe('alice')
+    expect(groups[1].get('[data-testid="key-group-owner"]').text()).toBe('Staging')
+    expect(groups[0].findAll('[data-testid="key-activity"]')[0].classes()).toContain('bg-emerald-500')
     expect(wrapper.text()).toContain('Production Key')
     expect(wrapper.text()).toContain('yuan')
     expect(wrapper.text()).toContain('$5.00 / $25.00')
     expect(wrapper.text()).toContain('$40.00 / $100.00')
+  })
+
+  it('keeps reset times visible and expires the recent activity indicator', async () => {
+    vi.useFakeTimers()
+    const now = new Date('2026-07-15T08:00:00.000Z')
+    vi.setSystemTime(now)
+    listKeys.mockResolvedValue({
+      items: [{
+        ...apiKey,
+        last_used_at: now.toISOString(),
+        reset_5h_at: new Date(now.getTime() + 60 * 60 * 1000).toISOString(),
+        reset_7d_at: new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString()
+      }],
+      total: 1,
+      page: 1,
+      page_size: 1000,
+      pages: 1
+    })
+
+    const wrapper = mount(RateLimitOverviewPanel)
+    await flushPromises()
+
+    expect(wrapper.text().match(/admin\.dashboard\.rateLimits\.resetsAt/g)).toHaveLength(2)
+    expect(wrapper.get('[data-testid="key-activity"]').classes()).toContain('bg-emerald-500')
+
+    vi.advanceTimersByTime(5 * 60 * 1000 + 30_000)
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.get('[data-testid="key-activity"]').classes()).toContain('bg-gray-300')
+    wrapper.unmount()
   })
 })
