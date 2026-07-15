@@ -99,6 +99,8 @@ export default {
         unlimited: 'Unlimited',
         resetsAt: 'Resets {time}',
         userId: 'User #{id}',
+        keyCount: '{count} API keys',
+        groupUsage: '7-day total {amount}',
         statuses: {
           active: 'Active',
           inactive: 'Inactive',

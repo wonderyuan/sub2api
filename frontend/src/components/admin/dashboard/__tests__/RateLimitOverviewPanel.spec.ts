@@ -61,13 +61,37 @@ const apiKey = {
   user: { id: 7, username: 'yuan', email: 'yuan@example.com', role: 'user', status: 'active' }
 } as ApiKey
 
+const higherUsageApiKey = {
+  ...apiKey,
+  id: 23,
+  name: 'High Usage Key',
+  usage_5h: 10,
+  usage_7d: 70
+} as ApiKey
+
+const otherOwnerApiKey = {
+  ...apiKey,
+  id: 22,
+  user_id: 8,
+  name: 'Team Key',
+  usage_5h: 15,
+  usage_7d: 60,
+  user: { id: 8, username: 'alice', email: 'alice@example.com', role: 'user', status: 'active' }
+} as ApiKey
+
 describe('RateLimitOverviewPanel', () => {
   beforeEach(() => {
     listUsageWindows.mockReset()
     refreshUsageWindows.mockReset()
     listKeys.mockReset()
     listUsageWindows.mockResolvedValue({ items: [accountItem], total: 1, page: 1, page_size: 10, pages: 1 })
-    listKeys.mockResolvedValue({ items: [apiKey], total: 1, page: 1, page_size: 10, pages: 1 })
+    listKeys.mockResolvedValue({
+      items: [apiKey, otherOwnerApiKey, higherUsageApiKey],
+      total: 3,
+      page: 1,
+      page_size: 10,
+      pages: 1
+    })
     refreshUsageWindows.mockResolvedValue([
       {
         ...accountItem,
@@ -91,7 +115,7 @@ describe('RateLimitOverviewPanel', () => {
     expect(wrapper.text()).toContain('91%')
   })
 
-  it('loads all-system API key limits when the API Key tab is selected', async () => {
+  it('groups API keys by owner and sorts groups and keys by usage', async () => {
     const wrapper = mount(RateLimitOverviewPanel)
     await flushPromises()
 
@@ -101,9 +125,19 @@ describe('RateLimitOverviewPanel', () => {
     expect(listKeys).toHaveBeenCalledWith(
       1,
       10,
-      expect.objectContaining({ sort_by: 'name', sort_order: 'asc' }),
+      expect.objectContaining({ sort_by: 'usage_7d', sort_order: 'desc' }),
       expect.objectContaining({ signal: expect.any(AbortSignal) })
     )
+
+    const groups = wrapper.findAll('[data-testid="key-group"]')
+    expect(groups).toHaveLength(2)
+    expect(groups[0].get('[data-testid="key-group-owner"]').text()).toBe('yuan')
+    expect(groups[0].get('[data-testid="key-group-usage"]').text()).toContain('$110.00')
+    expect(groups[0].findAll('[data-testid="key-row"]').map((row) => row.text())).toEqual([
+      expect.stringContaining('High Usage Key'),
+      expect.stringContaining('Production Key')
+    ])
+    expect(groups[1].get('[data-testid="key-group-owner"]').text()).toBe('alice')
     expect(wrapper.text()).toContain('Production Key')
     expect(wrapper.text()).toContain('yuan')
     expect(wrapper.text()).toContain('$5.00 / $25.00')
