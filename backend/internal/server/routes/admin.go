@@ -135,6 +135,8 @@ func registerAdminAPIKeyRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	apiKeys := admin.Group("/api-keys")
 	{
 		apiKeys.PUT("/:id", h.Admin.APIKey.UpdateGroup)
+		apiKeys.POST("/batch-sync-7d-window", h.Admin.APIKey.BatchSync7dWindow)
+		apiKeys.POST("/batch-reset-7d-usage", h.Admin.APIKey.BatchReset7dUsage)
 	}
 }
 

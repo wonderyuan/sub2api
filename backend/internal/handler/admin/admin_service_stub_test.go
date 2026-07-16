@@ -61,7 +61,11 @@ type stubAdminService struct {
 		sortOrder string
 		calls     int
 	}
-	lastListProxies struct {
+	lastBatchAPIKeyIDs    []int64
+	lastBatchGroupID      int64
+	lastBatchAccountID    int64
+	lastBatchAPIKeyAction string
+	lastListProxies       struct {
 		protocol  string
 		status    string
 		search    string
@@ -679,6 +683,36 @@ func (s *stubAdminService) AdminResetAPIKeyRateLimitUsage(ctx context.Context, k
 		}
 	}
 	return nil, service.ErrAPIKeyNotFound
+}
+
+func (s *stubAdminService) AdminBatchSyncAPIKey7dWindow(_ context.Context, keyIDs []int64, groupID, accountID int64) ([]*service.APIKey, error) {
+	s.lastBatchAPIKeyIDs = append([]int64(nil), keyIDs...)
+	s.lastBatchGroupID = groupID
+	s.lastBatchAccountID = accountID
+	s.lastBatchAPIKeyAction = "sync"
+	return s.batchAPIKeys(keyIDs), nil
+}
+
+func (s *stubAdminService) AdminBatchResetAPIKey7dUsage(_ context.Context, keyIDs []int64, groupID int64) ([]*service.APIKey, error) {
+	s.lastBatchAPIKeyIDs = append([]int64(nil), keyIDs...)
+	s.lastBatchGroupID = groupID
+	s.lastBatchAPIKeyAction = "reset"
+	return s.batchAPIKeys(keyIDs), nil
+}
+
+func (s *stubAdminService) batchAPIKeys(keyIDs []int64) []*service.APIKey {
+	selected := make(map[int64]struct{}, len(keyIDs))
+	for _, id := range keyIDs {
+		selected[id] = struct{}{}
+	}
+	items := make([]*service.APIKey, 0, len(keyIDs))
+	for i := range s.apiKeys {
+		if _, ok := selected[s.apiKeys[i].ID]; ok {
+			key := s.apiKeys[i]
+			items = append(items, &key)
+		}
+	}
+	return items
 }
 
 func (s *stubAdminService) ResetAccountQuota(ctx context.Context, id int64) error {

@@ -3,19 +3,30 @@ import { flushPromises, mount } from '@vue/test-utils'
 import type { ApiKey } from '@/types'
 import RateLimitOverviewPanel from '../RateLimitOverviewPanel.vue'
 
-const { listUsageWindows, refreshUsageWindows, listKeys } = vi.hoisted(() => ({
+const { listUsageWindows, refreshUsageWindows, listAccounts, listKeys, batchSync7dWindow, batchReset7dUsage, showSuccess, showError } = vi.hoisted(() => ({
   listUsageWindows: vi.fn(),
   refreshUsageWindows: vi.fn(),
-  listKeys: vi.fn()
+  listAccounts: vi.fn(),
+  listKeys: vi.fn(),
+  batchSync7dWindow: vi.fn(),
+  batchReset7dUsage: vi.fn(),
+  showSuccess: vi.fn(),
+  showError: vi.fn()
 }))
 
 vi.mock('@/api/admin', () => ({
   adminAPI: {
     accounts: {
       listUsageWindows,
-      refreshUsageWindows
-    }
+      refreshUsageWindows,
+      list: listAccounts
+    },
+    apiKeys: { batchSync7dWindow, batchReset7dUsage }
   }
+}))
+
+vi.mock('@/stores/app', () => ({
+  useAppStore: () => ({ showSuccess, showError })
 }))
 
 vi.mock('@/api/keys', () => ({
@@ -88,7 +99,12 @@ describe('RateLimitOverviewPanel', () => {
   beforeEach(() => {
     listUsageWindows.mockReset()
     refreshUsageWindows.mockReset()
+    listAccounts.mockReset()
     listKeys.mockReset()
+    batchSync7dWindow.mockReset()
+    batchReset7dUsage.mockReset()
+    showSuccess.mockReset()
+    showError.mockReset()
     listUsageWindows.mockResolvedValue({ items: [accountItem], total: 1, page: 1, page_size: 10, pages: 1 })
     listKeys.mockResolvedValue({
       items: [apiKey, otherOwnerApiKey, higherUsageApiKey],
@@ -103,6 +119,20 @@ describe('RateLimitOverviewPanel', () => {
         five_hour: { utilization: 91, resets_at: null, remaining_seconds: 0 }
       }
     ])
+    listAccounts.mockResolvedValue({
+      items: [{
+        id: 31,
+        name: 'Production Upstream',
+        platform: 'openai',
+        extra: { codex_7d_reset_at: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString() }
+      }],
+      total: 1,
+      page: 1,
+      page_size: 1000,
+      pages: 1
+    })
+    batchSync7dWindow.mockResolvedValue({ items: [], updated_count: 1 })
+    batchReset7dUsage.mockResolvedValue({ items: [], updated_count: 1 })
   })
 
   afterEach(() => {
@@ -181,5 +211,42 @@ describe('RateLimitOverviewPanel', () => {
 
     expect(wrapper.get('[data-testid="key-activity"]').classes()).toContain('bg-gray-300')
     wrapper.unmount()
+  })
+
+  it('syncs the selected API keys to the selected upstream 7-day window', async () => {
+    const wrapper = mount(RateLimitOverviewPanel)
+    await flushPromises()
+
+    const group = wrapper.findAll('[data-testid="key-group"]')[0]
+    await group.get('[data-testid="sync-7d-window-button"]').trigger('click')
+    await flushPromises()
+
+    expect(listAccounts).toHaveBeenCalledWith(1, 1000, expect.objectContaining({ group: '3', lite: '1' }))
+    await group.get('[data-testid="sync-account-select"]').setValue('31')
+    const checkboxes = group.findAll('[data-testid="batch-key-checkbox"]')
+    await checkboxes[0].setValue(true)
+    await group.get('[data-testid="confirm-batch-action"]').trigger('click')
+    await flushPromises()
+
+    expect(batchSync7dWindow).toHaveBeenCalledWith([23], 3, 31)
+    expect(listKeys).toHaveBeenCalledTimes(2)
+    expect(showSuccess).toHaveBeenCalled()
+  })
+
+  it('resets only the selected API key 7-day usage', async () => {
+    const wrapper = mount(RateLimitOverviewPanel)
+    await flushPromises()
+
+    const group = wrapper.findAll('[data-testid="key-group"]')[0]
+    await group.get('[data-testid="reset-7d-usage-button"]').trigger('click')
+    const confirm = group.get('[data-testid="confirm-batch-action"]')
+    expect(confirm.attributes('disabled')).toBeDefined()
+
+    await group.findAll('[data-testid="batch-key-checkbox"]')[1].setValue(true)
+    await confirm.trigger('click')
+    await flushPromises()
+
+    expect(batchReset7dUsage).toHaveBeenCalledWith([21], 3)
+    expect(showSuccess).toHaveBeenCalled()
   })
 })
