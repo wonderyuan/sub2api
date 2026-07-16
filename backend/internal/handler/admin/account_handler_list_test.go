@@ -2,6 +2,7 @@ package admin
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -72,6 +73,100 @@ func TestAccountHandlerRefreshUsageWindowsRejectsOversizedBatch(t *testing.T) {
 	router.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestAccountHandlerListUsageWindowsKeepsSnapshotsWhenAllocationFails(t *testing.T) {
+	router, adminSvc := setupAccountListRouter()
+	now := time.Now().UTC()
+	adminSvc.apiKey7dAllocationErr = errors.New("allocation unavailable")
+	adminSvc.accounts = []service.Account{{
+		ID:       82,
+		Name:     "codex-fallback",
+		Platform: service.PlatformOpenAI,
+		Type:     service.AccountTypeOAuth,
+		Status:   service.StatusActive,
+		Extra: map[string]any{
+			"codex_7d_used_percent": 55.0,
+			"codex_7d_reset_at":     now.Add(24 * time.Hour).Format(time.RFC3339),
+		},
+	}}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts/usage-windows?page=1&page_size=10", nil)
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var payload struct {
+		Data struct {
+			Items []AccountUsageWindowItem `json:"items"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
+	require.Len(t, payload.Data.Items, 1)
+	require.Equal(t, 55.0, payload.Data.Items[0].SevenDay.Utilization)
+}
+
+func TestBuildSevenDayQuotaCapacity(t *testing.T) {
+	capacity := buildSevenDayQuotaCapacity(&service.UsageProgress{
+		Utilization: 40,
+		WindowStats: &service.WindowStats{Cost: 999, UserCost: 32},
+	}, &service.APIKey7dAllocation{AllocatedUSD: 60})
+
+	require.NotNil(t, capacity)
+	require.InDelta(t, 80, capacity.EstimatedTotalUSD, 1e-9)
+	require.InDelta(t, 32, capacity.ActualUsedUSD, 1e-9)
+	require.InDelta(t, 48, capacity.ActualRemainingUSD, 1e-9)
+	require.InDelta(t, 60, *capacity.AllocatedUSD, 1e-9)
+	require.InDelta(t, 20, *capacity.UnallocatedRemainingUSD, 1e-9)
+	require.InDelta(t, 60, capacity.ActualRemainingPercent, 1e-9)
+	require.InDelta(t, 25, *capacity.UnallocatedRemainingPercent, 1e-9)
+}
+
+func TestBuildSevenDayQuotaCapacityClampsOverageAndRejectsUnknownEstimate(t *testing.T) {
+	overallocated := buildSevenDayQuotaCapacity(&service.UsageProgress{
+		Utilization: 120,
+		WindowStats: &service.WindowStats{UserCost: 120},
+	}, &service.APIKey7dAllocation{AllocatedUSD: 150})
+	require.NotNil(t, overallocated)
+	require.Zero(t, overallocated.ActualRemainingUSD)
+	require.Zero(t, *overallocated.UnallocatedRemainingUSD)
+	require.Zero(t, overallocated.ActualRemainingPercent)
+	require.Zero(t, *overallocated.UnallocatedRemainingPercent)
+
+	unlimited := buildSevenDayQuotaCapacity(&service.UsageProgress{
+		Utilization: 50,
+		WindowStats: &service.WindowStats{UserCost: 50},
+	}, &service.APIKey7dAllocation{Unlimited: true})
+	require.NotNil(t, unlimited)
+	require.True(t, unlimited.AllocationUnlimited)
+	require.Zero(t, *unlimited.UnallocatedRemainingUSD)
+	require.Zero(t, *unlimited.UnallocatedRemainingPercent)
+
+	allocationUnavailable := buildSevenDayQuotaCapacity(&service.UsageProgress{
+		Utilization: 50,
+		WindowStats: &service.WindowStats{UserCost: 50},
+	}, nil)
+	require.NotNil(t, allocationUnavailable)
+	require.Nil(t, allocationUnavailable.AllocatedUSD)
+	require.Nil(t, allocationUnavailable.UnallocatedRemainingUSD)
+
+	require.Nil(t, buildSevenDayQuotaCapacity(&service.UsageProgress{
+		Utilization: 0,
+		WindowStats: &service.WindowStats{UserCost: 10},
+	}, &service.APIKey7dAllocation{AllocatedUSD: 5}))
+	require.Nil(t, buildSevenDayQuotaCapacity(&service.UsageProgress{
+		Utilization: 25,
+		WindowStats: &service.WindowStats{UserCost: 0},
+	}, &service.APIKey7dAllocation{AllocatedUSD: 5}))
+}
+
+func TestSevenDayWindowStartUsesCurrentUpstreamWindow(t *testing.T) {
+	now := time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)
+	resetAt := now.Add(36 * time.Hour)
+	require.Equal(t, resetAt.Add(-7*24*time.Hour), sevenDayWindowStart(&service.UsageProgress{ResetsAt: &resetAt}, now))
+
+	expiredReset := now.Add(-time.Hour)
+	require.Equal(t, now.Add(-7*24*time.Hour), sevenDayWindowStart(&service.UsageProgress{ResetsAt: &expiredReset}, now))
 }
 
 func TestAccountHandlerListIncludesCreatedAt(t *testing.T) {

@@ -34,9 +34,21 @@ export interface AccountUsageWindowItem {
   status: string
   five_hour: UsageProgress | null
   seven_day: UsageProgress | null
+  seven_day_capacity?: SevenDayQuotaCapacity | null
   updated_at: string | null
   supports_live_refresh: boolean
   refresh_error?: string
+}
+
+export interface SevenDayQuotaCapacity {
+  estimated_total_usd: number
+  actual_used_usd: number
+  actual_remaining_usd: number
+  actual_remaining_percent: number
+  allocated_usd: number | null
+  unallocated_remaining_usd: number | null
+  unallocated_remaining_percent: number | null
+  allocation_unlimited: boolean
 }
 
 export async function listUsageWindows(

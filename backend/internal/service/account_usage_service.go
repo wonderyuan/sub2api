@@ -85,6 +85,10 @@ type accountWindowStatsBatchReader interface {
 	GetAccountWindowStatsBatch(ctx context.Context, accountIDs []int64, startTime time.Time) (map[int64]*usagestats.AccountStats, error)
 }
 
+type accountWindowStatsByStartBatchReader interface {
+	GetAccountWindowStatsByStarts(ctx context.Context, windowStarts map[int64]time.Time) (map[int64]*usagestats.AccountStats, error)
+}
+
 // apiUsageCache 缓存从 Anthropic API 获取的使用率数据（utilization, resets_at）
 // 同时支持缓存错误响应（负缓存），防止 429 等错误导致的重试风暴
 type apiUsageCache struct {
@@ -1339,6 +1343,38 @@ func windowStatsFromAccountStats(stats *usagestats.AccountStats) *WindowStats {
 		StandardCost: stats.StandardCost,
 		UserCost:     stats.UserCost,
 	}
+}
+
+// GetAccountWindowStatsByStarts returns account stats for windows that may
+// start at different times. The repository implementation performs one query.
+func (s *AccountUsageService) GetAccountWindowStatsByStarts(ctx context.Context, windowStarts map[int64]time.Time) (map[int64]*WindowStats, error) {
+	result := make(map[int64]*WindowStats, len(windowStarts))
+	if len(windowStarts) == 0 {
+		return result, nil
+	}
+	if s == nil || s.usageLogRepo == nil {
+		return nil, fmt.Errorf("usage log repository is unavailable")
+	}
+
+	if reader, ok := s.usageLogRepo.(accountWindowStatsByStartBatchReader); ok {
+		statsByAccount, err := reader.GetAccountWindowStatsByStarts(ctx, windowStarts)
+		if err != nil {
+			return nil, err
+		}
+		for accountID := range windowStarts {
+			result[accountID] = windowStatsFromAccountStats(statsByAccount[accountID])
+		}
+		return result, nil
+	}
+
+	for accountID, startTime := range windowStarts {
+		stats, err := s.usageLogRepo.GetAccountWindowStats(ctx, accountID, startTime)
+		if err != nil {
+			return nil, err
+		}
+		result[accountID] = windowStatsFromAccountStats(stats)
+	}
+	return result, nil
 }
 
 func buildCodexUsageProgressFromExtra(extra map[string]any, window string, now time.Time) *UsageProgress {

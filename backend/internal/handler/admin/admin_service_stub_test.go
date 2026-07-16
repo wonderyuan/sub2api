@@ -36,6 +36,7 @@ type stubAdminService struct {
 	getAccountResult                    *service.Account
 	updateAccountCalls                  int
 	updateAccountExtraCalls             int
+	apiKey7dAllocationErr               error
 	checkMixedErr                       error
 	lastMixedCheck                      struct {
 		accountID int64
@@ -308,6 +309,39 @@ func (s *stubAdminService) DeleteGroup(ctx context.Context, id int64) error {
 
 func (s *stubAdminService) GetGroupAPIKeys(ctx context.Context, groupID int64, page, pageSize int) ([]service.APIKey, int64, error) {
 	return s.apiKeys, int64(len(s.apiKeys)), nil
+}
+
+func (s *stubAdminService) GetAPIKey7dAllocations(_ context.Context, groupIDs []int64, includeUngrouped bool) (map[int64]service.APIKey7dAllocation, error) {
+	if s.apiKey7dAllocationErr != nil {
+		return nil, s.apiKey7dAllocationErr
+	}
+	result := make(map[int64]service.APIKey7dAllocation)
+	wanted := make(map[int64]struct{}, len(groupIDs))
+	for _, groupID := range groupIDs {
+		wanted[groupID] = struct{}{}
+	}
+	for _, key := range s.apiKeys {
+		if key.Status != service.StatusAPIKeyActive {
+			continue
+		}
+		groupID := int64(0)
+		if key.GroupID != nil {
+			groupID = *key.GroupID
+			if _, ok := wanted[groupID]; !ok {
+				continue
+			}
+		} else if !includeUngrouped {
+			continue
+		}
+		allocation := result[groupID]
+		if key.RateLimit7d <= 0 {
+			allocation.Unlimited = true
+		} else {
+			allocation.AllocatedUSD += key.RateLimit7d
+		}
+		result[groupID] = allocation
+	}
+	return result, nil
 }
 
 func (s *stubAdminService) GetGroupRateMultipliers(_ context.Context, _ int64) ([]service.UserGroupRateEntry, error) {

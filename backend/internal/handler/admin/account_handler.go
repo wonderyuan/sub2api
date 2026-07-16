@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"math"
 	"net/http"
 	"sort"
 	"strconv"
@@ -198,9 +199,23 @@ type AccountUsageWindowItem struct {
 	Status              string                 `json:"status"`
 	FiveHour            *service.UsageProgress `json:"five_hour"`
 	SevenDay            *service.UsageProgress `json:"seven_day"`
+	SevenDayCapacity    *SevenDayQuotaCapacity `json:"seven_day_capacity,omitempty"`
 	UpdatedAt           *time.Time             `json:"updated_at"`
 	SupportsLiveRefresh bool                   `json:"supports_live_refresh"`
 	RefreshError        string                 `json:"refresh_error,omitempty"`
+}
+
+// SevenDayQuotaCapacity compares the estimated upstream capacity with local
+// account spend and the 7-day limits allocated to API Keys in this account's groups.
+type SevenDayQuotaCapacity struct {
+	EstimatedTotalUSD           float64  `json:"estimated_total_usd"`
+	ActualUsedUSD               float64  `json:"actual_used_usd"`
+	ActualRemainingUSD          float64  `json:"actual_remaining_usd"`
+	ActualRemainingPercent      float64  `json:"actual_remaining_percent"`
+	AllocatedUSD                *float64 `json:"allocated_usd"`
+	UnallocatedRemainingUSD     *float64 `json:"unallocated_remaining_usd"`
+	UnallocatedRemainingPercent *float64 `json:"unallocated_remaining_percent"`
+	AllocationUnlimited         bool     `json:"allocation_unlimited"`
 }
 
 type RefreshAccountUsageWindowsRequest struct {
@@ -223,6 +238,165 @@ func accountUsageWindowItem(account *service.Account, usage *service.UsageInfo) 
 		item.UpdatedAt = usage.UpdatedAt
 	}
 	return item
+}
+
+func buildSevenDayQuotaCapacity(progress *service.UsageProgress, allocation *service.APIKey7dAllocation) *SevenDayQuotaCapacity {
+	if progress == nil || progress.WindowStats == nil || progress.Utilization <= 0 || math.IsNaN(progress.Utilization) || math.IsInf(progress.Utilization, 0) {
+		return nil
+	}
+	actualUsedUSD := progress.WindowStats.UserCost
+	if actualUsedUSD <= 0 || math.IsNaN(actualUsedUSD) || math.IsInf(actualUsedUSD, 0) {
+		return nil
+	}
+	estimatedTotalUSD := actualUsedUSD * 100 / progress.Utilization
+	if estimatedTotalUSD <= 0 || math.IsNaN(estimatedTotalUSD) || math.IsInf(estimatedTotalUSD, 0) {
+		return nil
+	}
+	actualRemainingUSD := math.Max(estimatedTotalUSD-actualUsedUSD, 0)
+	capacity := &SevenDayQuotaCapacity{
+		EstimatedTotalUSD:      estimatedTotalUSD,
+		ActualUsedUSD:          actualUsedUSD,
+		ActualRemainingUSD:     actualRemainingUSD,
+		ActualRemainingPercent: actualRemainingUSD / estimatedTotalUSD * 100,
+	}
+	if allocation == nil {
+		return capacity
+	}
+
+	allocatedUSD := allocation.AllocatedUSD
+	if allocatedUSD < 0 || math.IsNaN(allocatedUSD) || math.IsInf(allocatedUSD, 0) {
+		allocatedUSD = 0
+	}
+	unallocatedRemainingUSD := math.Max(estimatedTotalUSD-allocatedUSD, 0)
+	unallocatedRemainingPercent := unallocatedRemainingUSD / estimatedTotalUSD * 100
+	if allocation.Unlimited {
+		unallocatedRemainingUSD = 0
+		unallocatedRemainingPercent = 0
+	}
+	capacity.AllocatedUSD = &allocatedUSD
+	capacity.UnallocatedRemainingUSD = &unallocatedRemainingUSD
+	capacity.UnallocatedRemainingPercent = &unallocatedRemainingPercent
+	capacity.AllocationUnlimited = allocation.Unlimited
+	return capacity
+}
+
+func allocationForAccount(allocations map[int64]service.APIKey7dAllocation, accountID int64) *service.APIKey7dAllocation {
+	if allocations == nil {
+		return nil
+	}
+	allocation := allocations[accountID]
+	return &allocation
+}
+
+func sevenDayWindowStart(progress *service.UsageProgress, now time.Time) time.Time {
+	if progress != nil && progress.ResetsAt != nil && now.Before(*progress.ResetsAt) {
+		return progress.ResetsAt.Add(-7 * 24 * time.Hour)
+	}
+	return now.Add(-7 * 24 * time.Hour)
+}
+
+func (h *AccountHandler) attachSevenDayWindowStats(ctx context.Context, account *service.Account, usage *service.UsageInfo, now time.Time) {
+	if h.accountUsageService == nil || account == nil || usage == nil || usage.SevenDay == nil || usage.SevenDay.WindowStats != nil {
+		return
+	}
+	start := sevenDayWindowStart(usage.SevenDay, now)
+	stats, err := h.accountUsageService.GetAccountWindowStats(ctx, account.ID, start)
+	if err != nil {
+		slog.Warn("dashboard_account_7d_cost_query_failed", "account_id", account.ID, "error", err)
+		return
+	}
+	usage.SevenDay.WindowStats = &service.WindowStats{
+		Requests:     stats.Requests,
+		Tokens:       stats.Tokens,
+		Cost:         stats.Cost,
+		StandardCost: stats.StandardCost,
+		UserCost:     stats.UserCost,
+	}
+}
+
+func (h *AccountHandler) attachSevenDayWindowStatsBatch(ctx context.Context, accounts []*service.Account, usages []*service.UsageInfo, now time.Time) {
+	if h.accountUsageService == nil {
+		return
+	}
+	windowStarts := make(map[int64]time.Time, len(accounts))
+	for i, account := range accounts {
+		if account == nil || i >= len(usages) || usages[i] == nil || usages[i].SevenDay == nil || usages[i].SevenDay.WindowStats != nil {
+			continue
+		}
+		windowStarts[account.ID] = sevenDayWindowStart(usages[i].SevenDay, now)
+	}
+	if len(windowStarts) == 0 {
+		return
+	}
+	statsByAccount, err := h.accountUsageService.GetAccountWindowStatsByStarts(ctx, windowStarts)
+	if err != nil {
+		slog.Warn("dashboard_account_7d_cost_batch_query_failed", "account_count", len(windowStarts), "error", err)
+		return
+	}
+	for i, account := range accounts {
+		if account == nil || i >= len(usages) || usages[i] == nil || usages[i].SevenDay == nil || usages[i].SevenDay.WindowStats != nil {
+			continue
+		}
+		if stats, ok := statsByAccount[account.ID]; ok {
+			usages[i].SevenDay.WindowStats = stats
+		}
+	}
+}
+
+func (h *AccountHandler) loadAccount7dAllocations(ctx context.Context, accounts []*service.Account) (map[int64]service.APIKey7dAllocation, error) {
+	groupSet := make(map[int64]struct{})
+	includeUngrouped := false
+	for _, account := range accounts {
+		if account == nil {
+			continue
+		}
+		hasGroup := false
+		for _, groupID := range account.GroupIDs {
+			if groupID <= 0 {
+				continue
+			}
+			hasGroup = true
+			groupSet[groupID] = struct{}{}
+		}
+		if !hasGroup {
+			includeUngrouped = true
+		}
+	}
+	groupIDs := make([]int64, 0, len(groupSet))
+	for groupID := range groupSet {
+		groupIDs = append(groupIDs, groupID)
+	}
+	sort.Slice(groupIDs, func(i, j int) bool { return groupIDs[i] < groupIDs[j] })
+	byGroup, err := h.adminService.GetAPIKey7dAllocations(ctx, groupIDs, includeUngrouped)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make(map[int64]service.APIKey7dAllocation, len(accounts))
+	for _, account := range accounts {
+		if account == nil {
+			continue
+		}
+		seen := make(map[int64]struct{}, len(account.GroupIDs))
+		for _, groupID := range account.GroupIDs {
+			if groupID <= 0 {
+				continue
+			}
+			if _, ok := seen[groupID]; ok {
+				continue
+			}
+			seen[groupID] = struct{}{}
+			accountAllocation := result[account.ID]
+			groupAllocation := byGroup[groupID]
+			accountAllocation.AllocatedUSD += groupAllocation.AllocatedUSD
+			accountAllocation.Unlimited = accountAllocation.Unlimited || groupAllocation.Unlimited
+			result[account.ID] = accountAllocation
+		}
+		if len(seen) == 0 {
+			result[account.ID] = byGroup[0]
+		}
+	}
+	return result, nil
 }
 
 type AccountSchedulerScore struct {
@@ -721,11 +895,29 @@ func (h *AccountHandler) ListUsageWindows(c *gin.Context) {
 		return
 	}
 
+	accountPtrs := make([]*service.Account, len(accounts))
+	for i := range accounts {
+		accountPtrs[i] = &accounts[i]
+	}
+	allocations, err := h.loadAccount7dAllocations(c.Request.Context(), accountPtrs)
+	if err != nil {
+		slog.Warn("dashboard_account_7d_allocation_query_failed", "error", err)
+		allocations = nil
+	}
+
 	now := time.Now()
+	usages := make([]*service.UsageInfo, len(accounts))
+	for i := range accounts {
+		usages[i] = service.BuildStoredAccountUsage(&accounts[i], now)
+	}
+	h.attachSevenDayWindowStatsBatch(c.Request.Context(), accountPtrs, usages, now)
+
 	items := make([]AccountUsageWindowItem, len(accounts))
 	for i := range accounts {
 		account := &accounts[i]
-		items[i] = accountUsageWindowItem(account, service.BuildStoredAccountUsage(account, now))
+		item := accountUsageWindowItem(account, usages[i])
+		item.SevenDayCapacity = buildSevenDayQuotaCapacity(item.SevenDay, allocationForAccount(allocations, account.ID))
+		items[i] = item
 	}
 	response.Paginated(c, items, total, page, pageSize)
 }
@@ -762,6 +954,11 @@ func (h *AccountHandler) RefreshUsageWindows(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
+	allocations, err := h.loadAccount7dAllocations(c.Request.Context(), accounts)
+	if err != nil {
+		slog.Warn("dashboard_account_7d_allocation_query_failed", "error", err)
+		allocations = nil
+	}
 
 	results := make([]AccountUsageWindowItem, len(accounts))
 	g, gctx := errgroup.WithContext(c.Request.Context())
@@ -770,25 +967,35 @@ func (h *AccountHandler) RefreshUsageWindows(c *gin.Context) {
 		i := i
 		account := accounts[i]
 		g.Go(func() error {
-			item := accountUsageWindowItem(account, service.BuildStoredAccountUsage(account, time.Now()))
+			now := time.Now()
+			usage := service.BuildStoredAccountUsage(account, now)
+			item := accountUsageWindowItem(account, usage)
 			if !item.SupportsLiveRefresh {
 				item.RefreshError = "LIVE_REFRESH_UNSUPPORTED"
+				h.attachSevenDayWindowStats(gctx, account, usage, now)
+				item.SevenDay = usage.SevenDay
+				item.SevenDayCapacity = buildSevenDayQuotaCapacity(item.SevenDay, allocationForAccount(allocations, account.ID))
 				results[i] = item
 				return nil
 			}
 			if h.accountUsageService == nil {
 				item.RefreshError = "USAGE_SERVICE_UNAVAILABLE"
+				item.SevenDayCapacity = buildSevenDayQuotaCapacity(item.SevenDay, allocationForAccount(allocations, account.ID))
 				results[i] = item
 				return nil
 			}
 
-			usage, refreshErr := h.accountUsageService.GetUsage(gctx, account.ID, true)
-			if refreshErr != nil {
+			refreshedUsage, refreshErr := h.accountUsageService.GetUsage(gctx, account.ID, true)
+			if refreshErr != nil || refreshedUsage == nil {
 				slog.Warn("dashboard_account_usage_live_refresh_failed", "account_id", account.ID, "error", refreshErr)
 				item.RefreshError = "UPSTREAM_QUERY_FAILED"
 			} else {
+				usage = refreshedUsage
 				item = accountUsageWindowItem(account, usage)
 			}
+			h.attachSevenDayWindowStats(gctx, account, usage, now)
+			item.SevenDay = usage.SevenDay
+			item.SevenDayCapacity = buildSevenDayQuotaCapacity(item.SevenDay, allocationForAccount(allocations, account.ID))
 			results[i] = item
 			return nil
 		})

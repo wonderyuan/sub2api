@@ -156,6 +156,52 @@
                 />
               </div>
             </div>
+            <div class="border-t border-gray-100 px-3.5 py-3 dark:border-dark-700/70" data-testid="seven-day-capacity">
+              <div class="mb-2 flex min-w-0 items-center justify-between gap-2">
+                <p class="truncate text-[11px] font-semibold text-gray-600 dark:text-gray-300">
+                  {{ t('admin.dashboard.rateLimits.sevenDayUsdCapacity') }}
+                </p>
+                <p v-if="item.seven_day_capacity" class="flex-shrink-0 text-[11px] text-gray-400">
+                  {{ t('admin.dashboard.rateLimits.estimatedTotal', { amount: formatUsd(item.seven_day_capacity.estimated_total_usd) }) }}
+                </p>
+              </div>
+              <div v-if="item.seven_day_capacity" class="space-y-2.5">
+                <div data-testid="actual-capacity-row">
+                  <div class="mb-1 flex min-w-0 items-center justify-between gap-2 text-[11px]">
+                    <span class="truncate font-medium text-gray-600 dark:text-gray-300">{{ t('admin.dashboard.rateLimits.actualRemaining') }}</span>
+                    <span class="flex-shrink-0 font-semibold text-gray-800 dark:text-gray-100">
+                      {{ t('admin.dashboard.rateLimits.remainingAmount', { amount: formatUsd(item.seven_day_capacity.actual_remaining_usd) }) }} · {{ formatPercent(item.seven_day_capacity.actual_remaining_percent) }}
+                    </span>
+                  </div>
+                  <div class="h-1.5 overflow-hidden rounded-full bg-gray-100 dark:bg-dark-700">
+                    <div class="h-full rounded-full" :class="remainingClass(item.seven_day_capacity.actual_remaining_percent)" :style="{ width: `${clampedUtilization(item.seven_day_capacity.actual_remaining_percent)}%` }"></div>
+                  </div>
+                  <p class="mt-1 text-[10px] text-gray-400">
+                    {{ t('admin.dashboard.rateLimits.usedAmount', { amount: formatUsd(item.seven_day_capacity.actual_used_usd) }) }}
+                  </p>
+                </div>
+                <div data-testid="allocation-capacity-row">
+                  <div class="mb-1 flex min-w-0 items-center justify-between gap-2 text-[11px]">
+                    <span class="truncate font-medium text-gray-600 dark:text-gray-300">{{ t('admin.dashboard.rateLimits.unallocatedRemaining') }}</span>
+                    <span v-if="item.seven_day_capacity.unallocated_remaining_usd !== null && item.seven_day_capacity.unallocated_remaining_percent !== null" class="flex-shrink-0 font-semibold text-gray-800 dark:text-gray-100">
+                      {{ t('admin.dashboard.rateLimits.remainingAmount', { amount: formatUsd(item.seven_day_capacity.unallocated_remaining_usd) }) }} · {{ formatPercent(item.seven_day_capacity.unallocated_remaining_percent) }}
+                    </span>
+                  </div>
+                  <div v-if="item.seven_day_capacity.unallocated_remaining_percent !== null" class="h-1.5 overflow-hidden rounded-full bg-gray-100 dark:bg-dark-700">
+                    <div class="h-full rounded-full" :class="remainingClass(item.seven_day_capacity.unallocated_remaining_percent)" :style="{ width: `${clampedUtilization(item.seven_day_capacity.unallocated_remaining_percent)}%` }"></div>
+                  </div>
+                  <p v-if="item.seven_day_capacity.allocated_usd !== null" class="mt-1 text-[10px] text-gray-400">
+                    {{ item.seven_day_capacity.allocation_unlimited ? t('admin.dashboard.rateLimits.allocatedUnlimited') : t('admin.dashboard.rateLimits.allocatedAmount', { amount: formatUsd(item.seven_day_capacity.allocated_usd) }) }}
+                  </p>
+                  <p v-else class="mt-1 text-[10px] text-gray-400">
+                    {{ t('admin.dashboard.rateLimits.allocationUnavailable') }}
+                  </p>
+                </div>
+              </div>
+              <p v-else class="text-[11px] text-gray-400">
+                {{ t('admin.dashboard.rateLimits.capacityUnavailable') }}
+              </p>
+            </div>
           </article>
         </div>
       </template>
@@ -737,6 +783,12 @@ function clampedUtilization(value: number | null): number {
 function utilizationClass(value: number | null): string {
   if ((value ?? 0) >= 90) return 'bg-red-500'
   if ((value ?? 0) >= 70) return 'bg-amber-500'
+  return 'bg-emerald-500'
+}
+
+function remainingClass(value: number | null): string {
+  if ((value ?? 0) <= 10) return 'bg-red-500'
+  if ((value ?? 0) <= 30) return 'bg-amber-500'
   return 'bg-emerald-500'
 }
 

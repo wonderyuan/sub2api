@@ -704,6 +704,46 @@ func (r *apiKeyRepository) CountByUserID(ctx context.Context, userID int64) (int
 	return int64(count), err
 }
 
+// SumActive7dRateLimitsByGroupIDs aggregates configured 7-day limits without
+// loading API Key rows. A result key of 0 represents ungrouped API Keys.
+func (r *apiKeyRepository) SumActive7dRateLimitsByGroupIDs(ctx context.Context, groupIDs []int64, includeUngrouped bool) (map[int64]service.APIKey7dAllocation, error) {
+	result := make(map[int64]service.APIKey7dAllocation, len(groupIDs)+1)
+	if len(groupIDs) == 0 && !includeUngrouped {
+		return result, nil
+	}
+
+	query := `
+		SELECT
+			COALESCE(group_id, 0) AS group_id,
+			COALESCE(SUM(rate_limit_7d) FILTER (WHERE rate_limit_7d > 0), 0) AS allocated,
+			COALESCE(BOOL_OR(rate_limit_7d <= 0), false) AS unlimited
+		FROM api_keys
+		WHERE deleted_at IS NULL
+		  AND status = $1
+		  AND (group_id = ANY($2) OR ($3 AND group_id IS NULL))
+		GROUP BY COALESCE(group_id, 0)
+	`
+	rows, err := r.sql.QueryContext(ctx, query, service.StatusAPIKeyActive, pq.Array(groupIDs), includeUngrouped)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		var groupID int64
+		var allocated float64
+		var unlimited bool
+		if err := rows.Scan(&groupID, &allocated, &unlimited); err != nil {
+			return nil, err
+		}
+		result[groupID] = service.APIKey7dAllocation{AllocatedUSD: allocated, Unlimited: unlimited}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 func (r *apiKeyRepository) ExistsByKey(ctx context.Context, key string) (bool, error) {
 	count, err := r.activeQuery().Where(apikey.KeyEQ(key)).Count(ctx)
 	return count > 0, err

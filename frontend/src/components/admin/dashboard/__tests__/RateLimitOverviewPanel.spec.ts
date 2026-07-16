@@ -54,6 +54,16 @@ const accountItem = {
   status: 'active',
   five_hour: { utilization: 35, resets_at: null, remaining_seconds: 0 },
   seven_day: { utilization: 68, resets_at: null, remaining_seconds: 0 },
+  seven_day_capacity: {
+    estimated_total_usd: 100,
+    actual_used_usd: 68,
+    actual_remaining_usd: 32,
+    actual_remaining_percent: 32,
+    allocated_usd: 75,
+    unallocated_remaining_usd: 25,
+    unallocated_remaining_percent: 25,
+    allocation_unlimited: false
+  },
   updated_at: null,
   supports_live_refresh: true
 }
@@ -149,12 +159,47 @@ describe('RateLimitOverviewPanel', () => {
     expect(wrapper.text()).toContain('Codex Primary')
     expect(wrapper.text()).toContain('35%')
     expect(wrapper.text()).toContain('68%')
+    expect(wrapper.get('[data-testid="seven-day-capacity"]').text()).toContain('$100.00')
+    expect(wrapper.get('[data-testid="actual-capacity-row"]').text()).toContain('$32.00')
+    expect(wrapper.get('[data-testid="actual-capacity-row"]').text()).toContain('$68.00')
+    expect(wrapper.get('[data-testid="actual-capacity-row"]').text()).toContain('32%')
+    expect(wrapper.get('[data-testid="actual-capacity-row"] .h-full').attributes('style')).toContain('width: 32%')
+    expect(wrapper.get('[data-testid="allocation-capacity-row"]').text()).toContain('$25.00')
+    expect(wrapper.get('[data-testid="allocation-capacity-row"]').text()).toContain('$75.00')
+    expect(wrapper.get('[data-testid="allocation-capacity-row"]').text()).toContain('25%')
+    expect(wrapper.get('[data-testid="allocation-capacity-row"] .h-full').attributes('style')).toContain('width: 25%')
 
     await wrapper.get('[data-testid="live-refresh"]').trigger('click')
     await flushPromises()
 
     expect(refreshUsageWindows).toHaveBeenCalledWith([11])
     expect(wrapper.text()).toContain('91%')
+  })
+
+  it('keeps actual capacity visible when allocation data is unavailable', async () => {
+    listUsageWindows.mockResolvedValue({
+      items: [{
+        ...accountItem,
+        seven_day_capacity: {
+          ...accountItem.seven_day_capacity,
+          allocated_usd: null,
+          unallocated_remaining_usd: null,
+          unallocated_remaining_percent: null
+        }
+      }],
+      total: 1,
+      page: 1,
+      page_size: 10,
+      pages: 1
+    })
+
+    const wrapper = mount(RateLimitOverviewPanel)
+    await flushPromises()
+    await wrapper.get('[data-testid="accounts-tab"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="actual-capacity-row"]').text()).toContain('$32.00')
+    expect(wrapper.get('[data-testid="allocation-capacity-row"]').text()).toContain('admin.dashboard.rateLimits.allocationUnavailable')
   })
 
   it('groups API keys by assigned group, sorts keys by utilization, and marks recent activity', async () => {
