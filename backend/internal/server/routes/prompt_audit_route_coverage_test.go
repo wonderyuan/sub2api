@@ -134,3 +134,22 @@ func TestPromptAuditAdminRoutesRejectUnauthenticatedAndNonAdminRequests(t *testi
 		})
 	}
 }
+
+func TestPromptAuditEventDetailRequiresStepUp(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	handlers := &handler.Handlers{Admin: &handler.AdminHandlers{
+		PromptAudit: securityaudit.NewPromptAdminHandler(nil),
+	}}
+	stepUpCalled := false
+	stepUp := servermiddleware.StepUpAuthMiddleware(func(c *gin.Context) {
+		stepUpCalled = true
+		c.AbortWithStatus(http.StatusForbidden)
+	})
+	registerPromptAuditRoutes(router.Group("/api/v1/admin"), handlers, stepUp)
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/admin/prompt-audit/events/7", nil))
+	require.True(t, stepUpCalled)
+	require.Equal(t, http.StatusForbidden, recorder.Code)
+}
