@@ -784,6 +784,22 @@ export default {
         errorAccounts: '异常 {count}',
         loadFailed: '加载并发数据失败'
       },
+      concurrencyTrend: {
+        title: '最近一小时用户并发峰值',
+        subtitle: '每分钟峰值，需求并发包含正在执行和排队中的请求',
+        systemDemand: '系统总需求',
+        systemWaiting: '系统排队',
+        currentDemand: '当前需求',
+        currentActive: '占用',
+        currentWaiting: '排队',
+        selectUser: '选择用户曲线',
+        removeUser: '移除用户曲线',
+        axis: '并发请求数',
+        unlimited: '不限',
+        userTooltip: '{user}：需求 {demand}，占用 {active}，排队 {waiting}，上限 {limit}',
+        empty: '最近一小时暂无并发活动',
+        loadFailed: '加载用户并发趋势失败'
+      },
       realtime: {
         title: '实时信息',
         connected: '实时已连接',

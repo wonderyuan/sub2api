@@ -17,6 +17,10 @@ type opsAccountStatsRepository interface {
 	ListOpsAccountsForStats(ctx context.Context, platformFilter string, groupIDFilter *int64) ([]Account, error)
 }
 
+type opsUserTrendRepository interface {
+	ListOpsUsersByIDs(ctx context.Context, ids []int64) ([]User, error)
+}
+
 func (s *OpsService) listAllAccountsForOps(ctx context.Context, platformFilter string, groupIDFilter *int64) ([]Account, error) {
 	if s == nil || s.accountRepo == nil {
 		return []Account{}, nil
@@ -405,4 +409,83 @@ func (s *OpsService) GetUserConcurrencyStats(ctx context.Context) (map[int64]*Us
 	}
 
 	return result, &collectedAt, nil
+}
+
+// GetUserConcurrencyTrend returns the last hour of per-minute user concurrency peaks.
+func (s *OpsService) GetUserConcurrencyTrend(ctx context.Context) (*UserConcurrencyTrendResponse, error) {
+	if err := s.RequireMonitoringEnabled(ctx); err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC()
+	if s == nil || s.concurrencyService == nil {
+		end := now.Truncate(time.Minute)
+		start := end.Add(-59 * time.Minute)
+		points := make([]UserConcurrencyTrendPoint, 0, 60)
+		for bucket := start; !bucket.After(end); bucket = bucket.Add(time.Minute) {
+			points = append(points, UserConcurrencyTrendPoint{BucketStart: bucket, Users: map[int64]ConcurrencyPeak{}})
+		}
+		return &UserConcurrencyTrendResponse{StartTime: start, EndTime: end, Bucket: "minute", Points: points, Users: map[int64]UserConcurrencyTrendUser{}}, nil
+	}
+	trend, err := s.concurrencyService.GetUserConcurrencyTrend(ctx, now)
+	if err != nil {
+		return nil, err
+	}
+	currentLoads, err := s.concurrencyService.GetCurrentUserConcurrencyLoads(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	seen := make(map[int64]struct{})
+	for _, point := range trend.Points {
+		for userID := range point.Users {
+			seen[userID] = struct{}{}
+		}
+	}
+	current := ConcurrencySnapshot{}
+	for userID, load := range currentLoads {
+		if load == nil {
+			continue
+		}
+		seen[userID] = struct{}{}
+		current.InUse += max(load.CurrentConcurrency, 0)
+		current.Waiting += max(load.WaitingCount, 0)
+	}
+	current.Demand = current.InUse + current.Waiting
+	metadata := make(map[int64]UserConcurrencyTrendUser, len(seen))
+	if len(seen) > 0 {
+		ids := make([]int64, 0, len(seen))
+		for userID := range seen {
+			ids = append(ids, userID)
+		}
+		var users []User
+		var listErr error
+		if repo, ok := s.userRepo.(opsUserTrendRepository); ok {
+			users, listErr = repo.ListOpsUsersByIDs(ctx, ids)
+		} else {
+			users, listErr = s.listAllActiveUsersForOps(ctx)
+		}
+		if listErr != nil {
+			return nil, listErr
+		}
+		for _, user := range users {
+			if _, ok := seen[user.ID]; !ok {
+				continue
+			}
+			metadata[user.ID] = UserConcurrencyTrendUser{
+				UserID:      user.ID,
+				UserEmail:   user.Email,
+				Username:    user.Username,
+				MaxCapacity: int64(user.Concurrency),
+			}
+		}
+	}
+
+	return &UserConcurrencyTrendResponse{
+		StartTime: trend.StartTime,
+		EndTime:   trend.EndTime,
+		Bucket:    trend.Bucket,
+		Current:   current,
+		Points:    trend.Points,
+		Users:     metadata,
+	}, nil
 }

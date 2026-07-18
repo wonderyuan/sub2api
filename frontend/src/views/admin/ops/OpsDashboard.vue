@@ -67,6 +67,11 @@
         </div>
       </div>
 
+      <OpsUserConcurrencyTrendChart
+        v-if="opsEnabled && !(loading && !hasLoadedOnce)"
+        :refresh-token="dashboardRefreshToken"
+      />
+
       <!-- Row: Visual Analysis (baseline 3-up grid) -->
       <div v-if="opsEnabled && !(loading && !hasLoadedOnce)" class="grid grid-cols-1 gap-6 md:grid-cols-3">
         <OpsLatencyChart :latency-data="latencyHistogram" :loading="loadingLatency" />
@@ -164,6 +169,7 @@ import { useAdminSettingsStore, useAppStore } from '@/stores'
 import OpsDashboardHeader from './components/OpsDashboardHeader.vue'
 import OpsDashboardSkeleton from './components/OpsDashboardSkeleton.vue'
 import OpsConcurrencyCard from './components/OpsConcurrencyCard.vue'
+import OpsUserConcurrencyTrendChart from './components/OpsUserConcurrencyTrendChart.vue'
 import OpsErrorDetailModal from './components/OpsErrorDetailModal.vue'
 import OpsErrorDistributionChart from './components/OpsErrorDistributionChart.vue'
 import OpsInvestigationCard from './components/OpsInvestigationCard.vue'

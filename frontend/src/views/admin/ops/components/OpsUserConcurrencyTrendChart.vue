@@ -1,0 +1,269 @@
+<script setup lang="ts">
+import { computed, onMounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { Chart as ChartJS, CategoryScale, Legend, LineElement, LinearScale, PointElement, Tooltip } from 'chart.js'
+import { Line } from 'vue-chartjs'
+import { opsAPI, type OpsUserConcurrencyTrendResponse, type UserConcurrencyTrendUser } from '@/api/admin/ops'
+
+ChartJS.register(CategoryScale, Legend, LineElement, LinearScale, PointElement, Tooltip)
+
+interface Props {
+  refreshToken?: number
+}
+
+const props = withDefaults(defineProps<Props>(), { refreshToken: 0 })
+const { t } = useI18n()
+
+const loading = ref(false)
+const errorMessage = ref('')
+const trend = ref<OpsUserConcurrencyTrendResponse | null>(null)
+const selectedUserId = ref('')
+const pinnedUserIds = ref<string[]>([])
+
+const palette = ['#2563eb', '#059669', '#d97706', '#dc2626', '#7c3aed', '#0891b2', '#db2777', '#4f46e5', '#65a30d', '#ea580c']
+
+const userOptions = computed(() => {
+  const users = trend.value?.users || {}
+  return Object.entries(users)
+    .map(([id, user]) => ({ id, user, label: user.username || user.user_email || `#${id}` }))
+    .sort((a, b) => a.label.localeCompare(b.label))
+})
+
+const rankedUserIds = computed(() => {
+  const peaks = new Map<string, number>()
+  for (const point of trend.value?.points || []) {
+    for (const [userId, peak] of Object.entries(point.users || {})) {
+      peaks.set(userId, Math.max(peaks.get(userId) || 0, peak.peak_demand || 0))
+    }
+  }
+  return [...peaks.entries()].sort((a, b) => b[1] - a[1]).map(([userId]) => userId)
+})
+
+const visibleUserIds = computed(() => {
+  const ids = [...rankedUserIds.value.slice(0, 5)]
+  for (const userId of pinnedUserIds.value) {
+    if (!ids.includes(userId)) ids.push(userId)
+  }
+  return ids.slice(0, 10)
+})
+
+const hasData = computed(() => (trend.value?.points || []).some(point => (point.system?.peak_demand || 0) > 0))
+
+function userLabel(userId: string): string {
+  const user = trend.value?.users?.[userId]
+  return user?.username || user?.user_email || `#${userId}`
+}
+
+function userOptionText(user: UserConcurrencyTrendUser, fallback: string): string {
+  const label = user.username || user.user_email || fallback
+  return user.user_email && user.user_email !== label ? `${label} · ${user.user_email}` : label
+}
+
+function userLimitLabel(user?: UserConcurrencyTrendUser): string | number {
+  return user && user.max_capacity > 0 ? user.max_capacity : t('admin.ops.concurrencyTrend.unlimited')
+}
+
+function formatMinute(value: string): string {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
+}
+
+const chartData = computed(() => {
+  const points = trend.value?.points || []
+  const datasets: any[] = [
+    {
+      label: t('admin.ops.concurrencyTrend.systemDemand'),
+      data: points.map(point => point.system?.peak_demand || 0),
+      borderColor: '#111827',
+      backgroundColor: '#111827',
+      borderWidth: 2.5,
+      pointRadius: 1.5,
+      pointHitRadius: 10,
+      tension: 0.25,
+      userId: null,
+      metric: 'demand'
+    },
+    {
+      label: t('admin.ops.concurrencyTrend.systemWaiting'),
+      data: points.map(point => point.system?.peak_waiting || 0),
+      borderColor: '#dc2626',
+      backgroundColor: '#dc2626',
+      borderDash: [6, 4],
+      borderWidth: 1.5,
+      pointRadius: 1,
+      pointHitRadius: 10,
+      tension: 0.25,
+      userId: null,
+      metric: 'waiting'
+    }
+  ]
+
+  visibleUserIds.value.forEach((userId, index) => {
+    const color = palette[index % palette.length]
+    datasets.push({
+      label: userLabel(userId),
+      data: points.map(point => point.users?.[userId]?.peak_demand || 0),
+      borderColor: color,
+      backgroundColor: color,
+      borderWidth: 1.5,
+      pointRadius: 1,
+      pointHitRadius: 10,
+      tension: 0.25,
+      userId,
+      metric: 'demand'
+    })
+  })
+
+  return {
+    labels: points.map(point => formatMinute(point.bucket_start)),
+    datasets
+  }
+})
+
+const chartOptions = computed(() => {
+  const dark = document.documentElement.classList.contains('dark')
+  const textColor = dark ? '#9ca3af' : '#6b7280'
+  const gridColor = dark ? '#374151' : '#e5e7eb'
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: { intersect: false, mode: 'index' as const },
+    plugins: {
+      legend: {
+        position: 'top' as const,
+        align: 'start' as const,
+        labels: { color: textColor, usePointStyle: true, boxWidth: 7, font: { size: 10 } }
+      },
+      tooltip: {
+        backgroundColor: dark ? '#1f2937' : '#ffffff',
+        titleColor: dark ? '#f3f4f6' : '#111827',
+        bodyColor: dark ? '#d1d5db' : '#4b5563',
+        borderColor: gridColor,
+        borderWidth: 1,
+        callbacks: {
+          label: (context: any) => {
+            const userId = context.dataset.userId as string | null
+            if (!userId) return `${context.dataset.label}: ${context.parsed.y}`
+            const point = trend.value?.points?.[context.dataIndex]
+            const peak = point?.users?.[userId]
+            const user: UserConcurrencyTrendUser | undefined = trend.value?.users?.[userId]
+            return t('admin.ops.concurrencyTrend.userTooltip', {
+              user: userLabel(userId),
+              demand: peak?.peak_demand || 0,
+              active: peak?.peak_in_use || 0,
+              waiting: peak?.peak_waiting || 0,
+              limit: userLimitLabel(user)
+            })
+          }
+        }
+      }
+    },
+    scales: {
+      x: {
+        grid: { display: false },
+        ticks: { color: textColor, maxTicksLimit: 12, font: { size: 10 } }
+      },
+      y: {
+        beginAtZero: true,
+        grid: { color: gridColor },
+        ticks: { color: textColor, precision: 0, font: { size: 10 } },
+        title: { display: true, text: t('admin.ops.concurrencyTrend.axis'), color: textColor, font: { size: 10 } }
+      }
+    }
+  }
+})
+
+function pinSelectedUser() {
+  const userId = selectedUserId.value
+  if (!userId || pinnedUserIds.value.includes(userId)) return
+  pinnedUserIds.value = [...pinnedUserIds.value, userId].slice(-5)
+  selectedUserId.value = ''
+}
+
+function removePinnedUser(userId: string) {
+  pinnedUserIds.value = pinnedUserIds.value.filter(id => id !== userId)
+}
+
+async function loadData() {
+  loading.value = true
+  errorMessage.value = ''
+  try {
+    trend.value = await opsAPI.getUserConcurrencyTrend()
+    const validUsers = new Set(Object.keys(trend.value.users || {}))
+    pinnedUserIds.value = pinnedUserIds.value.filter(userId => validUsers.has(userId))
+  } catch (error: any) {
+    console.error('[OpsUserConcurrencyTrend] Failed to load data', error)
+    errorMessage.value = error?.response?.data?.detail || t('admin.ops.concurrencyTrend.loadFailed')
+  } finally {
+    loading.value = false
+  }
+}
+
+watch(() => props.refreshToken, loadData)
+onMounted(loadData)
+</script>
+
+<template>
+  <div class="flex h-[420px] flex-col rounded-3xl bg-white p-6 shadow-sm ring-1 ring-gray-900/5 dark:bg-dark-800 dark:ring-dark-700">
+    <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <h3 class="text-sm font-bold text-gray-900 dark:text-white">{{ t('admin.ops.concurrencyTrend.title') }}</h3>
+        <div class="mt-0.5 text-[11px] text-gray-500 dark:text-gray-400">{{ t('admin.ops.concurrencyTrend.subtitle') }}</div>
+      </div>
+      <div v-if="trend?.enabled" class="flex flex-wrap items-center gap-3 text-[11px] text-gray-500 dark:text-gray-400">
+        <span>{{ t('admin.ops.concurrencyTrend.currentDemand') }} <strong class="font-mono text-gray-900 dark:text-white">{{ trend.current?.demand || 0 }}</strong></span>
+        <span>{{ t('admin.ops.concurrencyTrend.currentActive') }} <strong class="font-mono text-emerald-600 dark:text-emerald-400">{{ trend.current?.in_use || 0 }}</strong></span>
+        <span>{{ t('admin.ops.concurrencyTrend.currentWaiting') }} <strong class="font-mono text-red-600 dark:text-red-400">{{ trend.current?.waiting || 0 }}</strong></span>
+      </div>
+      <div class="flex min-w-0 items-center gap-2">
+        <select
+          v-model="selectedUserId"
+          class="h-8 min-w-[220px] rounded-lg border border-gray-200 bg-white px-2 text-xs text-gray-700 outline-none focus:border-blue-500 dark:border-dark-700 dark:bg-dark-900 dark:text-gray-200"
+          :aria-label="t('admin.ops.concurrencyTrend.selectUser')"
+          @change="pinSelectedUser"
+        >
+          <option value="">{{ t('admin.ops.concurrencyTrend.selectUser') }}</option>
+          <option v-for="option in userOptions" :key="option.id" :value="option.id">
+            {{ userOptionText(option.user, option.label) }}
+          </option>
+        </select>
+        <button
+          type="button"
+          class="flex h-8 w-8 items-center justify-center rounded-lg bg-gray-100 text-gray-600 transition-colors hover:bg-gray-200 disabled:opacity-50 dark:bg-dark-700 dark:text-gray-300 dark:hover:bg-dark-600"
+          :disabled="loading"
+          :title="t('common.refresh')"
+          @click="loadData"
+        >
+          <svg class="h-3.5 w-3.5" :class="{ 'animate-spin': loading }" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <div v-if="pinnedUserIds.length" class="mb-3 flex flex-wrap gap-1.5">
+      <button
+        v-for="userId in pinnedUserIds"
+        :key="userId"
+        type="button"
+        class="inline-flex items-center gap-1 rounded bg-gray-100 px-2 py-1 text-[10px] font-medium text-gray-700 hover:bg-gray-200 dark:bg-dark-700 dark:text-gray-200 dark:hover:bg-dark-600"
+        :title="t('admin.ops.concurrencyTrend.removeUser')"
+        @click="removePinnedUser(userId)"
+      >
+        <span class="max-w-[180px] truncate">{{ userLabel(userId) }}</span>
+        <span aria-hidden="true">×</span>
+      </button>
+    </div>
+
+    <div v-if="errorMessage" class="mb-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600 dark:bg-red-900/20 dark:text-red-400">
+      {{ errorMessage }}
+    </div>
+
+    <div class="min-h-0 flex-1">
+      <Line v-if="hasData" :data="chartData" :options="chartOptions" />
+      <div v-else class="flex h-full items-center justify-center text-sm text-gray-400">
+        {{ loading ? t('common.loading') : t('admin.ops.concurrencyTrend.empty') }}
+      </div>
+    </div>
+  </div>
+</template>

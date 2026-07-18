@@ -783,6 +783,22 @@ export default {
         errorAccounts: 'Errors {count}',
         loadFailed: 'Failed to load concurrency data'
       },
+      concurrencyTrend: {
+        title: 'User concurrency peaks · Last hour',
+        subtitle: 'Per-minute peaks; demand includes active and queued requests',
+        systemDemand: 'Total demand',
+        systemWaiting: 'Queued',
+        currentDemand: 'Current demand',
+        currentActive: 'Active',
+        currentWaiting: 'Queued',
+        selectUser: 'Select user series',
+        removeUser: 'Remove user series',
+        axis: 'Concurrent requests',
+        unlimited: 'Unlimited',
+        userTooltip: '{user}: demand {demand}, active {active}, queued {waiting}, limit {limit}',
+        empty: 'No concurrency activity in the last hour',
+        loadFailed: 'Failed to load user concurrency trend'
+      },
       realtime: {
         title: 'Realtime',
         connected: 'Realtime connected',

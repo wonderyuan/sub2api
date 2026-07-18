@@ -108,6 +108,48 @@ func (h *OpsHandler) GetUserConcurrencyStats(c *gin.Context) {
 	response.Success(c, payload)
 }
 
+// GetUserConcurrencyTrend returns per-minute user concurrency peaks for the last hour.
+// GET /api/v1/admin/ops/user-concurrency-trend
+func (h *OpsHandler) GetUserConcurrencyTrend(c *gin.Context) {
+	if h.opsService == nil {
+		response.Error(c, http.StatusServiceUnavailable, "Ops service not available")
+		return
+	}
+	if err := h.opsService.RequireMonitoringEnabled(c.Request.Context()); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	if !h.opsService.IsRealtimeMonitoringEnabled(c.Request.Context()) {
+		response.Success(c, gin.H{
+			"enabled": false,
+			"bucket":  "minute",
+			"current": service.ConcurrencySnapshot{},
+			"points":  []service.UserConcurrencyTrendPoint{},
+			"users":   map[int64]service.UserConcurrencyTrendUser{},
+		})
+		return
+	}
+
+	trend, err := h.opsService.GetUserConcurrencyTrend(c.Request.Context())
+	if err != nil {
+		if isOpsRealtimeRequestCanceled(c, err) {
+			return
+		}
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{
+		"enabled":    true,
+		"start_time": trend.StartTime,
+		"end_time":   trend.EndTime,
+		"bucket":     trend.Bucket,
+		"current":    trend.Current,
+		"points":     trend.Points,
+		"users":      trend.Users,
+		"timestamp":  time.Now().UTC(),
+	})
+}
+
 // GetAccountAvailability returns account availability statistics.
 // GET /api/v1/admin/ops/account-availability
 //

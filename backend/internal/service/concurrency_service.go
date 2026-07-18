@@ -229,7 +229,8 @@ const (
 
 // ConcurrencyService 管理账号和用户的并发限制。
 type ConcurrencyService struct {
-	cache ConcurrencyCache
+	cache         ConcurrencyCache
+	trendRecorder *userConcurrencyTrendRecorder
 
 	accountLoadCacheTTL atomic.Int64
 	accountLoadCacheMu  sync.RWMutex
@@ -250,6 +251,20 @@ func NewConcurrencyService(cache ConcurrencyCache) *ConcurrencyService {
 	}
 	svc.SetAccountLoadBatchCacheTTL(defaultAccountLoadBatchCacheTTL)
 	return svc
+}
+
+func (s *ConcurrencyService) StartTrendRecorder() {
+	if s == nil || s.trendRecorder != nil {
+		return
+	}
+	s.trendRecorder = newUserConcurrencyTrendRecorder(s.cache)
+}
+
+func (s *ConcurrencyService) Stop() {
+	if s == nil || s.trendRecorder == nil {
+		return
+	}
+	s.trendRecorder.stop()
 }
 
 // AcquireOpenAIWSIngressLease atomically reserves one live ingress connection
@@ -381,6 +396,28 @@ func (s *ConcurrencyService) AcquireAccountSlot(ctx context.Context, accountID i
 func (s *ConcurrencyService) AcquireUserSlot(ctx context.Context, userID int64, maxConcurrency int) (*AcquireResult, error) {
 	// If maxConcurrency is 0 or negative, no limit
 	if maxConcurrency <= 0 {
+		if stateCache, ok := s.cache.(userConcurrencyStateCache); ok {
+			requestID := generateRequestID()
+			current, observedAt, err := stateCache.TrackUserSlotWithState(ctx, userID, requestID)
+			if err != nil {
+				logger.LegacyPrintf("service.concurrency", "Warning: failed to track unlimited user slot for %d: %v", userID, err)
+				return &AcquireResult{Acquired: true, ReleaseFunc: func() {}}, nil
+			}
+			s.observeUserConcurrencyState(userID, &current, nil, observedAt)
+			return &AcquireResult{
+				Acquired: true,
+				ReleaseFunc: func() {
+					bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+					defer cancel()
+					remaining, releasedAt, releaseErr := stateCache.ReleaseUserSlotWithState(bgCtx, userID, requestID)
+					if releaseErr != nil {
+						logger.LegacyPrintf("service.concurrency", "Warning: failed to release unlimited user slot for %d (req=%s): %v", userID, requestID, releaseErr)
+						return
+					}
+					s.observeUserConcurrencyState(userID, &remaining, nil, releasedAt)
+				},
+			}, nil
+		}
 		return &AcquireResult{
 			Acquired:    true,
 			ReleaseFunc: func() {}, // no-op
@@ -390,7 +427,18 @@ func (s *ConcurrencyService) AcquireUserSlot(ctx context.Context, userID int64, 
 	// Generate unique request ID for this slot
 	requestID := generateRequestID()
 
-	acquired, err := s.cache.AcquireUserSlot(ctx, userID, maxConcurrency, requestID)
+	var acquired bool
+	var err error
+	if stateCache, ok := s.cache.(userConcurrencyStateCache); ok {
+		var current int
+		var observedAt time.Time
+		acquired, current, observedAt, err = stateCache.AcquireUserSlotWithState(ctx, userID, maxConcurrency, requestID)
+		if err == nil {
+			s.observeUserConcurrencyState(userID, &current, nil, observedAt)
+		}
+	} else {
+		acquired, err = s.cache.AcquireUserSlot(ctx, userID, maxConcurrency, requestID)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -401,6 +449,15 @@ func (s *ConcurrencyService) AcquireUserSlot(ctx context.Context, userID int64, 
 			ReleaseFunc: func() {
 				bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
+				if stateCache, ok := s.cache.(userConcurrencyStateCache); ok {
+					current, observedAt, err := stateCache.ReleaseUserSlotWithState(bgCtx, userID, requestID)
+					if err == nil {
+						s.observeUserConcurrencyState(userID, &current, nil, observedAt)
+						return
+					}
+					logger.LegacyPrintf("service.concurrency", "Warning: failed to release user slot for %d (req=%s): %v", userID, requestID, err)
+					return
+				}
 				if err := s.cache.ReleaseUserSlot(bgCtx, userID, requestID); err != nil {
 					logger.LegacyPrintf("service.concurrency", "Warning: failed to release user slot for %d (req=%s): %v", userID, requestID, err)
 				}
@@ -498,7 +555,18 @@ func (s *ConcurrencyService) IncrementWaitCount(ctx context.Context, userID int6
 		return true, nil
 	}
 
-	result, err := s.cache.IncrementWaitCount(ctx, userID, maxWait)
+	var result bool
+	var err error
+	if stateCache, ok := s.cache.(userConcurrencyStateCache); ok {
+		var current int
+		var observedAt time.Time
+		result, current, observedAt, err = stateCache.IncrementWaitCountWithState(ctx, userID, maxWait)
+		if err == nil {
+			s.observeUserConcurrencyState(userID, nil, &current, observedAt)
+		}
+	} else {
+		result, err = s.cache.IncrementWaitCount(ctx, userID, maxWait)
+	}
 	if err != nil {
 		// On error, allow the request to proceed (fail open)
 		logger.LegacyPrintf("service.concurrency", "Warning: increment wait count failed for user %d: %v", userID, err)
@@ -518,6 +586,15 @@ func (s *ConcurrencyService) DecrementWaitCount(ctx context.Context, userID int6
 	bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
+	if stateCache, ok := s.cache.(userConcurrencyStateCache); ok {
+		current, observedAt, err := stateCache.DecrementWaitCountWithState(bgCtx, userID)
+		if err == nil {
+			s.observeUserConcurrencyState(userID, nil, &current, observedAt)
+			return
+		}
+		logger.LegacyPrintf("service.concurrency", "Warning: decrement wait count failed for user %d: %v", userID, err)
+		return
+	}
 	if err := s.cache.DecrementWaitCount(bgCtx, userID); err != nil {
 		logger.LegacyPrintf("service.concurrency", "Warning: decrement wait count failed for user %d: %v", userID, err)
 	}

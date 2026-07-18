@@ -367,6 +367,40 @@ export interface OpsUserConcurrencyStatsResponse {
   timestamp?: string
 }
 
+export interface ConcurrencyPeak {
+  peak_in_use: number
+  peak_waiting: number
+  peak_demand: number
+}
+
+export interface UserConcurrencyTrendPoint {
+  bucket_start: string
+  system: ConcurrencyPeak
+  users: Record<string, ConcurrencyPeak>
+}
+
+export interface UserConcurrencyTrendUser {
+  user_id: number
+  user_email: string
+  username: string
+  max_capacity: number
+}
+
+export interface OpsUserConcurrencyTrendResponse {
+  enabled: boolean
+  start_time?: string
+  end_time?: string
+  bucket: 'minute'
+  current: {
+    in_use: number
+    waiting: number
+    demand: number
+  }
+  points: UserConcurrencyTrendPoint[]
+  users: Record<string, UserConcurrencyTrendUser>
+  timestamp?: string
+}
+
 export async function getConcurrencyStats(platform?: string, groupId?: number | null): Promise<OpsConcurrencyStatsResponse> {
   const params: Record<string, any> = {}
   if (platform) {
@@ -382,6 +416,11 @@ export async function getConcurrencyStats(platform?: string, groupId?: number | 
 
 export async function getUserConcurrencyStats(): Promise<OpsUserConcurrencyStatsResponse> {
   const { data } = await apiClient.get<OpsUserConcurrencyStatsResponse>('/admin/ops/user-concurrency')
+  return data
+}
+
+export async function getUserConcurrencyTrend(): Promise<OpsUserConcurrencyTrendResponse> {
+  const { data } = await apiClient.get<OpsUserConcurrencyTrendResponse>('/admin/ops/user-concurrency-trend')
   return data
 }
 
@@ -1372,6 +1411,7 @@ export const opsAPI = {
   getOpenAITokenStats,
   getConcurrencyStats,
   getUserConcurrencyStats,
+  getUserConcurrencyTrend,
   getAccountAvailabilityStats,
   getRealtimeTrafficSummary,
   subscribeQPS,

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -86,7 +87,7 @@ var (
 		if exists ~= false then
 			redis.call('ZADD', key, now, requestID)
 			redis.call('EXPIRE', key, ttl)
-			return {1, now}
+			return {1, now, redis.call('ZCARD', key)}
 		end
 
 		-- 检查是否达到并发上限
@@ -94,10 +95,10 @@ var (
 		if count < maxConcurrency then
 			redis.call('ZADD', key, now, requestID)
 			redis.call('EXPIRE', key, ttl)
-			return {1, now}
+			return {1, now, redis.call('ZCARD', key)}
 		end
 
-		return {0, now}
+		return {0, now, count}
 	`)
 
 	// getCountScript 统计有序集合中的槽位数量并清理过期条目
@@ -140,6 +141,20 @@ var (
 		redis.call('ZADD', key, now, requestID)
 		redis.call('EXPIRE', key, ttl)
 		return 1
+	`)
+
+	// trackUserSlotStateScript records an unlimited user's request for stats only
+	// and returns the observed count plus Redis time.
+	trackUserSlotStateScript = redis.NewScript(`
+		redis.replicate_commands()
+		local key = KEYS[1]
+		local ttl = tonumber(ARGV[1])
+		local requestID = ARGV[2]
+		local now = tonumber(redis.call('TIME')[1])
+		redis.call('ZREMRANGEBYSCORE', key, '-inf', now - ttl)
+		redis.call('ZADD', key, now, requestID)
+		redis.call('EXPIRE', key, ttl)
+		return {redis.call('ZCARD', key), now}
 	`)
 
 	// acquireOpenAIWSIngressLeaseScript atomically reaps crashed members and
@@ -203,15 +218,15 @@ var (
 		local now = tonumber(redis.call('TIME')[1])
 
 		if current >= tonumber(ARGV[1]) then
-			return {0, now}
+			return {0, now, current}
 		end
 
-		redis.call('INCR', KEYS[1])
+		local next = redis.call('INCR', KEYS[1])
 
 		-- Refresh TTL so long-running traffic doesn't expire active queue counters.
 		redis.call('EXPIRE', KEYS[1], ARGV[2])
 
-		return {1, now}
+		return {1, now, next}
 	`)
 
 	// incrementAccountWaitScript - account-level wait queue count (refresh TTL on each increment)
@@ -242,12 +257,34 @@ var (
 
 	// decrementWaitScript - same as before
 	decrementWaitScript = redis.NewScript(`
+			redis.replicate_commands()
 			local current = redis.call('GET', KEYS[1])
+			local remaining = 0
 			if current ~= false and tonumber(current) > 0 then
-				redis.call('DECR', KEYS[1])
+				remaining = redis.call('DECR', KEYS[1])
 			end
-			return 1
+			if remaining <= 0 then
+				remaining = 0
+				redis.call('DEL', KEYS[1])
+			end
+			local now = tonumber(redis.call('TIME')[1])
+			return {remaining, now}
 		`)
+
+	// releaseSlotStateScript atomically releases a user slot and returns the
+	// remaining count plus Redis time for realtime trend observation.
+	releaseSlotStateScript = redis.NewScript(`
+		redis.replicate_commands()
+		local ttl = tonumber(ARGV[1])
+		local now = tonumber(redis.call('TIME')[1])
+		redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', now - ttl)
+		redis.call('ZREM', KEYS[1], ARGV[2])
+		local remaining = redis.call('ZCARD', KEYS[1])
+		if remaining == 0 then
+			redis.call('DEL', KEYS[1])
+		end
+		return {remaining, now}
+	`)
 
 	// cleanupExpiredSlotsScript 清理单个账号/用户有序集合中过期槽位
 	// KEYS[1] = 有序集合键
@@ -630,27 +667,48 @@ func (c *concurrencyCache) GetAccountConcurrencyBatch(ctx context.Context, accou
 // User slot operations
 
 func (c *concurrencyCache) AcquireUserSlot(ctx context.Context, userID int64, maxConcurrency int, requestID string) (bool, error) {
+	acquired, _, _, err := c.AcquireUserSlotWithState(ctx, userID, maxConcurrency, requestID)
+	return acquired, err
+}
+
+func (c *concurrencyCache) AcquireUserSlotWithState(ctx context.Context, userID int64, maxConcurrency int, requestID string) (bool, int, time.Time, error) {
 	key := userSlotKey(userID)
 	// 时间戳在 Lua 脚本内使用 Redis TIME 命令获取，确保多实例时钟一致
-	result, now, err := runScriptInt64Pair(ctx, c.rdb, acquireScript, []string{key}, maxConcurrency, c.slotTTLSeconds, requestID)
+	result, now, current, err := runScriptInt64Triple(ctx, c.rdb, acquireScript, []string{key}, maxConcurrency, c.slotTTLSeconds, requestID)
 	if err != nil {
-		return false, err
+		return false, 0, time.Time{}, err
 	}
 	if result == 1 {
 		// 成功占槽后标记活跃用户，避免启动清理依赖全量 SCAN。
 		c.touchActiveIndexAt(ctx, userActiveIndexKey, userID, now+int64(c.slotTTLSeconds))
 	}
-	return result == 1, nil
+	return result == 1, int(current), time.Unix(now, 0).UTC(), nil
+}
+
+func (c *concurrencyCache) TrackUserSlotWithState(ctx context.Context, userID int64, requestID string) (int, time.Time, error) {
+	key := userSlotKey(userID)
+	current, now, err := runScriptInt64Pair(ctx, c.rdb, trackUserSlotStateScript, []string{key}, c.slotTTLSeconds, requestID)
+	if err != nil {
+		return 0, time.Time{}, err
+	}
+	c.touchActiveIndexAt(ctx, userActiveIndexKey, userID, now+int64(c.slotTTLSeconds))
+	return int(current), time.Unix(now, 0).UTC(), nil
 }
 
 func (c *concurrencyCache) ReleaseUserSlot(ctx context.Context, userID int64, requestID string) error {
+	_, _, err := c.ReleaseUserSlotWithState(ctx, userID, requestID)
+	return err
+}
+
+func (c *concurrencyCache) ReleaseUserSlotWithState(ctx context.Context, userID int64, requestID string) (int, time.Time, error) {
 	key := userSlotKey(userID)
-	if err := c.rdb.ZRem(ctx, key, requestID).Err(); err != nil {
-		return err
+	remaining, now, err := runScriptInt64Pair(ctx, c.rdb, releaseSlotStateScript, []string{key}, c.slotTTLSeconds, requestID)
+	if err != nil {
+		return 0, time.Time{}, err
 	}
 	// 释放后按 Redis 中剩余负载修正索引状态。
 	c.refreshUserActiveIndex(ctx, userID)
-	return nil
+	return int(remaining), time.Unix(now, 0).UTC(), nil
 }
 
 func (c *concurrencyCache) GetUserConcurrency(ctx context.Context, userID int64) (int, error) {
@@ -756,26 +814,39 @@ func (c *concurrencyCache) GetAPIKeyConcurrencyBatch(ctx context.Context, apiKey
 // Wait queue operations
 
 func (c *concurrencyCache) IncrementWaitCount(ctx context.Context, userID int64, maxWait int) (bool, error) {
+	incremented, _, _, err := c.IncrementWaitCountWithState(ctx, userID, maxWait)
+	return incremented, err
+}
+
+func (c *concurrencyCache) IncrementWaitCountWithState(ctx context.Context, userID int64, maxWait int) (bool, int, time.Time, error) {
 	key := waitQueueKey(userID)
-	result, now, err := runScriptInt64Pair(ctx, c.rdb, incrementWaitScript, []string{key}, maxWait, c.waitQueueTTLSeconds)
+	result, now, current, err := runScriptInt64Triple(ctx, c.rdb, incrementWaitScript, []string{key}, maxWait, c.waitQueueTTLSeconds)
 	if err != nil {
-		return false, err
+		return false, 0, time.Time{}, err
 	}
 	if result == 1 {
 		// 等待队列也会让用户保持“活跃”，否则槽位为 0 时后台任务可能漏看等待计数。
 		c.touchActiveIndexAt(ctx, userActiveIndexKey, userID, now+int64(c.waitQueueTTLSeconds))
 	}
-	return result == 1, nil
+	return result == 1, int(current), time.Unix(now, 0).UTC(), nil
 }
 
 func (c *concurrencyCache) DecrementWaitCount(ctx context.Context, userID int64) error {
+	_, _, err := c.DecrementWaitCountWithState(ctx, userID)
+	return err
+}
+
+func (c *concurrencyCache) DecrementWaitCountWithState(ctx context.Context, userID int64) (int, time.Time, error) {
 	key := waitQueueKey(userID)
-	_, err := decrementWaitScript.Run(ctx, c.rdb, []string{key}).Result()
+	remaining, now, err := runScriptInt64Pair(ctx, c.rdb, decrementWaitScript, []string{key})
 	if err == nil {
 		// 等待数减少后重新判断是否还需要保留索引。
 		c.refreshUserActiveIndex(ctx, userID)
 	}
-	return err
+	if err != nil {
+		return 0, time.Time{}, err
+	}
+	return int(remaining), time.Unix(now, 0).UTC(), nil
 }
 
 // Account wait queue operations
