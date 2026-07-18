@@ -112,7 +112,7 @@ describe('admin DashboardView', () => {
       trend: [],
       start_date: '',
       end_date: '',
-      granularity: 'hour'
+      granularity: '5minute'
     })
     getUserSpendingRanking.mockResolvedValue({
       ranking: [],
@@ -152,5 +152,10 @@ describe('admin DashboardView', () => {
       end_date: formatLocalDate(now),
       granularity: 'hour'
     }))
+    expect(getUserRequestBodyTrend).toHaveBeenCalledWith({
+      start_date: formatLocalDate(yesterday),
+      end_date: formatLocalDate(now),
+      limit: 12
+    })
   })
 })

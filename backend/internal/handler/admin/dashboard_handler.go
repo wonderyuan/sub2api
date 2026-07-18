@@ -470,12 +470,15 @@ func (h *DashboardHandler) GetUserUsageTrend(c *gin.Context) {
 	})
 }
 
+const userRequestBodyTrendGranularity = "5minute"
+
 // GetUserRequestBodyTrend handles getting user-level request body size trend data.
 // GET /api/v1/admin/dashboard/request-body-trend
-// Query params: start_date, end_date (YYYY-MM-DD), granularity (day/hour), limit (default 12)
+// Query params: start_date, end_date (YYYY-MM-DD), limit (default 12).
+// Request body size is always aggregated into five-minute buckets.
 func (h *DashboardHandler) GetUserRequestBodyTrend(c *gin.Context) {
 	startTime, endTime := parseTimeRange(c)
-	granularity := c.DefaultQuery("granularity", "day")
+	granularity := userRequestBodyTrendGranularity
 	limitStr := c.DefaultQuery("limit", "12")
 	limit, err := strconv.Atoi(limitStr)
 	if err != nil || limit <= 0 {

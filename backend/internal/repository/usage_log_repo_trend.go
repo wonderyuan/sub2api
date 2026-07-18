@@ -31,7 +31,14 @@ func (r *usageLogRepository) GetUserRequestBodyTrend(ctx context.Context, startT
 	if limit <= 0 {
 		limit = 12
 	}
-	dateFormat := safeDateFormat(granularity)
+	dateExpression := fmt.Sprintf("TO_CHAR(u.created_at, '%s')", safeDateFormat(granularity))
+	if granularity == "5minute" {
+		dateExpression = `TO_CHAR(
+			date_trunc('hour', u.created_at)
+			+ INTERVAL '5 minutes' * FLOOR(EXTRACT(MINUTE FROM u.created_at) / 5)::double precision,
+			'YYYY-MM-DD HH24:MI'
+		)`
+	}
 	query := fmt.Sprintf(`
 		WITH top_users AS (
 			SELECT user_id
@@ -43,7 +50,7 @@ func (r *usageLogRepository) GetUserRequestBodyTrend(ctx context.Context, startT
 			ORDER BY SUM(request_body_bytes) DESC
 			LIMIT $3
 		)
-		SELECT TO_CHAR(u.created_at, '%s'), u.user_id, COALESCE(users.email, ''), COALESCE(users.username, ''), COUNT(*),
+		SELECT %s, u.user_id, COALESCE(users.email, ''), COALESCE(users.username, ''), COUNT(*),
 			COALESCE(SUM(u.request_body_bytes), 0), COALESCE(AVG(u.request_body_bytes), 0), COALESCE(MAX(u.request_body_bytes), 0)
 		FROM usage_logs u
 		LEFT JOIN users ON users.id = u.user_id
@@ -52,7 +59,7 @@ func (r *usageLogRepository) GetUserRequestBodyTrend(ctx context.Context, startT
 		  AND u.created_at < $5
 		  AND u.request_body_bytes > 0
 		GROUP BY 1, 2, 3, 4
-		ORDER BY 1 ASC, 6 DESC`, dateFormat)
+		ORDER BY 1 ASC, 6 DESC`, dateExpression)
 	rows, err := r.sql.QueryContext(ctx, query, startTime, endTime, limit, startTime, endTime)
 	if err != nil {
 		return nil, err

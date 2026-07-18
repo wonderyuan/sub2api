@@ -839,7 +839,6 @@ const loadRequestBodyTrend = async () => {
     const response = await adminAPI.dashboard.getUserRequestBodyTrend({
       start_date: startDate.value,
       end_date: endDate.value,
-      granularity: granularity.value,
       limit: 12
     })
     if (currentSeq !== requestBodyTrendLoadSeq) return
