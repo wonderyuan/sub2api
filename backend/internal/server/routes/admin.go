@@ -16,6 +16,7 @@ func RegisterAdminRoutes(
 	adminAuth middleware.AdminAuthMiddleware,
 	auditLog middleware.AuditLogMiddleware,
 	stepUpAuth middleware.StepUpAuthMiddleware,
+	alwaysStepUpAuth middleware.AlwaysStepUpAuthMiddleware,
 	settingService *service.SettingService,
 ) {
 	admin := v1.Group("/admin")
@@ -109,7 +110,7 @@ func RegisterAdminRoutes(
 		registerContentModerationRoutes(admin, h)
 
 		// 独立提示词输入审计
-		registerPromptAuditRoutes(admin, h, stepUpAuth)
+		registerPromptAuditRoutes(admin, h, alwaysStepUpAuth)
 
 		// 邀请返利（专属用户管理）
 		registerAffiliateRoutes(admin, h)
@@ -119,7 +120,7 @@ func RegisterAdminRoutes(
 	}
 }
 
-func registerPromptAuditRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAuth middleware.StepUpAuthMiddleware) {
+func registerPromptAuditRoutes(admin *gin.RouterGroup, h *handler.Handlers, alwaysStepUpAuth middleware.AlwaysStepUpAuthMiddleware) {
 	promptAudit := admin.Group("/prompt-audit")
 	{
 		promptAudit.GET("/config", h.Admin.PromptAudit.GetConfig)
@@ -129,7 +130,7 @@ func registerPromptAuditRoutes(admin *gin.RouterGroup, h *handler.Handlers, step
 		promptAudit.GET("/events", h.Admin.PromptAudit.ListEvents)
 		// Event details contain the complete unredacted prompt and require a
 		// recently verified human administrator session.
-		promptAudit.GET("/events/:id", gin.HandlerFunc(stepUpAuth), h.Admin.PromptAudit.GetEvent)
+		promptAudit.GET("/events/:id", gin.HandlerFunc(alwaysStepUpAuth), h.Admin.PromptAudit.GetEvent)
 		promptAudit.DELETE("/events/:id", h.Admin.PromptAudit.DeleteEvent)
 		promptAudit.POST("/events/batch-delete", h.Admin.PromptAudit.BatchDelete)
 		promptAudit.POST("/events/delete-preview", h.Admin.PromptAudit.DeletePreview)

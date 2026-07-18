@@ -113,7 +113,8 @@ func TestPromptAuditAdminRoutesRejectUnauthenticatedAndNonAdminRequests(t *testi
 	})
 	auditLog := servermiddleware.AuditLogMiddleware(func(c *gin.Context) { c.Next() })
 	stepUp := servermiddleware.StepUpAuthMiddleware(func(c *gin.Context) { c.Next() })
-	RegisterAdminRoutes(router.Group("/api/v1"), handlers, adminAuth, auditLog, stepUp, nil)
+	alwaysStepUp := servermiddleware.AlwaysStepUpAuthMiddleware(func(c *gin.Context) { c.Next() })
+	RegisterAdminRoutes(router.Group("/api/v1"), handlers, adminAuth, auditLog, stepUp, alwaysStepUp, nil)
 
 	for _, tc := range []struct {
 		name       string
@@ -142,7 +143,7 @@ func TestPromptAuditEventDetailRequiresStepUp(t *testing.T) {
 		PromptAudit: securityaudit.NewPromptAdminHandler(nil),
 	}}
 	stepUpCalled := false
-	stepUp := servermiddleware.StepUpAuthMiddleware(func(c *gin.Context) {
+	stepUp := servermiddleware.AlwaysStepUpAuthMiddleware(func(c *gin.Context) {
 		stepUpCalled = true
 		c.AbortWithStatus(http.StatusForbidden)
 	})

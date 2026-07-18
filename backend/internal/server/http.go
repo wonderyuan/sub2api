@@ -35,6 +35,7 @@ func ProvideRouter(
 	apiKeyAuth middleware2.APIKeyAuthMiddleware,
 	auditLog middleware2.AuditLogMiddleware,
 	stepUpAuth middleware2.StepUpAuthMiddleware,
+	alwaysStepUpAuth middleware2.AlwaysStepUpAuthMiddleware,
 	apiKeyService *service.APIKeyService,
 	subscriptionService *service.SubscriptionService,
 	opsService *service.OpsService,
@@ -96,7 +97,7 @@ func ProvideRouter(
 		service.SetWebSearchManager(websearch.NewManager(configs, redisClient))
 	})
 
-	return SetupRouter(r, handlers, jwtAuth, adminAuth, apiKeyAuth, auditLog, stepUpAuth, apiKeyService, subscriptionService, opsService, settingService, cfg, redisClient)
+	return SetupRouter(r, handlers, jwtAuth, adminAuth, apiKeyAuth, auditLog, stepUpAuth, alwaysStepUpAuth, apiKeyService, subscriptionService, opsService, settingService, cfg, redisClient)
 }
 
 // ProvideHTTPServer 提供 HTTP 服务器
