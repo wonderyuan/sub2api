@@ -241,8 +241,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	setOpsRequestContext(c, "", false)
 	sessionHashBody := body
 	// Classify before legacy body-signal normalization can rewrite /responses
-	// to /responses/compact. Only the native compact path and remote v2 signal
-	// are eligible to bypass an opted-in account's local limit.
+	// to /responses/compact. The native compact path and an explicit streaming
+	// compaction body signal are eligible to bypass an opted-in account's local
+	// limit.
 	compactRequest := isOpenAICompactRequest(c, body)
 	body, ok = h.normalizeOpenAIResponsesCompactRequest(c, reqLog, body)
 	if !ok {
@@ -693,19 +694,18 @@ func isOpenAIRemoteCompactPath(c *gin.Context) bool {
 	return strings.HasSuffix(normalizedPath, "/responses/compact")
 }
 
-// isOpenAICompactRequest identifies only Codex remote compact requests.
+// isOpenAICompactRequest identifies native remote compact requests and legacy
+// streaming body-signal compaction requests used by compatible clients.
 func isOpenAICompactRequest(c *gin.Context, body []byte) bool {
 	if isOpenAIRemoteCompactPath(c) {
 		return true
 	}
-	return isBareOpenAIResponsesPath(c) &&
-		service.HasCompactionTriggerInInput(body) &&
-		isOpenAIRemoteCompactionV2Request(c, body)
+	return isBareOpenAIResponsesPath(c) && isOpenAIStreamingCompactionBodySignal(body)
 }
 
 // shouldBypassAccountRequestBodyLimitForCompact keeps the account-level limit
 // as the default. Only an explicitly opted-in OpenAI account may receive an
-// oversized remote compact request; the global gateway limit still applies.
+// oversized compact request; the global gateway limit still applies.
 func shouldBypassAccountRequestBodyLimitForCompact(account *service.Account, bodyBytes int64, compactRequest bool) bool {
 	if !compactRequest || account == nil || !account.AllowsCompactRequestBodyLimitBypass() {
 		return false
@@ -724,9 +724,13 @@ func isBareOpenAIResponsesPath(c *gin.Context) bool {
 	return strings.HasSuffix(normalizedPath, "/responses")
 }
 
-func isOpenAIRemoteCompactionV2Request(c *gin.Context, body []byte) bool {
+func isOpenAIStreamingCompactionBodySignal(body []byte) bool {
 	stream, valid := parseOpenAICompatibleStream(body)
-	if !valid || !stream || c == nil || c.Request == nil {
+	return valid && stream && service.HasCompactionTriggerInInput(body)
+}
+
+func isOpenAIRemoteCompactionV2Request(c *gin.Context, body []byte) bool {
+	if !isOpenAIStreamingCompactionBodySignal(body) || c == nil || c.Request == nil {
 		return false
 	}
 	for _, header := range c.Request.Header.Values("x-codex-beta-features") {

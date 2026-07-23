@@ -127,9 +127,17 @@ func TestOpenAICompactRequestBodyLimitBypass(t *testing.T) {
 			want:      false,
 		},
 		{
-			name:      "compact signal without v2 protocol",
+			name:      "legacy compact body signal without v2 protocol",
 			path:      "/v1/responses",
 			body:      compactBody,
+			account:   allowedAccount,
+			bodyBytes: 11,
+			want:      true,
+		},
+		{
+			name:      "non-streaming compact body signal",
+			path:      "/v1/responses",
+			body:      []byte(`{"model":"gpt-5.6-sol","stream":false,"input":[{"type":"compaction_trigger"}]}`),
 			account:   allowedAccount,
 			bodyBytes: 11,
 			want:      false,
@@ -164,7 +172,7 @@ func TestOpenAICompactRequestBodyLimitBypass(t *testing.T) {
 	}
 }
 
-func TestOpenAICompactRequestBodyLimitBypass_LegacyBodySignalRemainsLimitedAfterNormalization(t *testing.T) {
+func TestOpenAICompactRequestBodyLimitBypass_LegacyBodySignalIsEligibleBeforeNormalization(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.6-sol","stream":true,"input":[{"type":"compaction_trigger"}]}`)
 	account := &service.Account{
 		Platform: service.PlatformOpenAI,
@@ -182,8 +190,8 @@ func TestOpenAICompactRequestBodyLimitBypass_LegacyBodySignalRemainsLimitedAfter
 	_, ok := h.normalizeOpenAIResponsesCompactRequest(c, zap.NewNop(), body)
 	require.True(t, ok)
 	require.True(t, isOpenAIRemoteCompactPath(c))
-	require.False(t, compactRequest)
-	require.False(t, shouldBypassAccountRequestBodyLimitForCompact(account, 11, compactRequest))
+	require.True(t, compactRequest)
+	require.True(t, shouldBypassAccountRequestBodyLimitForCompact(account, 11, compactRequest))
 }
 
 func TestNormalizeOpenAIResponsesCompactRequest_BodySignalTrailingSlashPromoted(t *testing.T) {
