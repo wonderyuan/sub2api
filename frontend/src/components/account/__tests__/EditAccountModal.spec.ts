@@ -395,6 +395,27 @@ describe('EditAccountModal', () => {
     })
   })
 
+  it('opts an OpenAI account into oversized remote compaction only when it has a body limit', async () => {
+    const account = buildAccount()
+    account.extra = {
+      request_body_limit_bytes: 10 * 1024 * 1024
+    }
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    const toggle = wrapper.get<HTMLInputElement>('[data-testid="allow-compact-request-body-limit-bypass"]')
+    expect(toggle.element.checked).toBe(false)
+
+    await toggle.setValue(true)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.allow_compact_request_body_limit_bypass).toBe(true)
+  })
+
   it('loads and submits the per-account OpenAI long-context billing toggle', async () => {
     const account = buildAccount()
     account.extra = {

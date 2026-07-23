@@ -806,6 +806,8 @@ export default {
       requestBodyLimit: '请求体大小限制（MB）',
       requestBodyLimitPlaceholder: '0 表示不限制',
       requestBodyLimitHint: '限制发送到此账号的单次请求体大小；超出限制时返回 413。留空或填写 0 表示不限制。',
+      allowCompactRequestBodyLimitBypass: '允许远程压缩请求超过此限制',
+      allowCompactRequestBodyLimitBypassHint: '仅在确认上游可接收完整历史时启用；全局网关请求体限制仍会生效。',
       expiresAt: '过期时间',
       expiresAtHint: '留空表示不过期',
       higherPriorityFirst: '数值越小优先级越高',

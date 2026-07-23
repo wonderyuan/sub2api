@@ -751,6 +751,8 @@ export default {
       requestBodyLimit: 'Request Body Size Limit (MB)',
       requestBodyLimitPlaceholder: '0 means unlimited',
       requestBodyLimitHint: 'Limits the size of each request body sent to this account. Requests over the limit return 413. Leave empty or enter 0 for no limit.',
+      allowCompactRequestBodyLimitBypass: 'Allow remote compact requests to exceed this limit',
+      allowCompactRequestBodyLimitBypassHint: 'Only enable this after confirming the upstream accepts the full transcript. The global gateway limit still applies.',
       expiresAt: 'Expires At',
       expiresAtHint: 'Leave empty for no expiration',
       higherPriorityFirst: 'Lower value means higher priority',
