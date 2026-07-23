@@ -2621,6 +2621,11 @@ func (a *Account) GetBaseRPM() int {
 // A missing, zero, or negative value means unlimited.
 const RequestBodyLimitExtraKey = "request_body_limit_bytes"
 
+// CompactRequestBodyLimitBypassExtraKey opts an OpenAI account into allowing
+// remote compact requests to exceed its normal request-body limit. It is off
+// by default because the upstream must be able to accept the full transcript.
+const CompactRequestBodyLimitBypassExtraKey = "allow_compact_request_body_limit_bypass"
+
 // GetRequestBodyLimitBytes returns the account-level request body limit in bytes.
 // It accepts JSON numbers or numeric strings from Account.Extra.
 func (a *Account) GetRequestBodyLimitBytes() int64 {
@@ -2634,6 +2639,16 @@ func (a *Account) GetRequestBodyLimitBytes() int64 {
 		}
 	}
 	return 0
+}
+
+// AllowsCompactRequestBodyLimitBypass reports whether this OpenAI account has
+// explicitly opted into accepting an oversized remote compact request.
+func (a *Account) AllowsCompactRequestBodyLimitBypass() bool {
+	if a == nil || !a.IsOpenAI() || a.Extra == nil {
+		return false
+	}
+	allowed, _ := a.Extra[CompactRequestBodyLimitBypassExtraKey].(bool)
+	return allowed
 }
 
 // GetRPMStrategy 获取 RPM 策略

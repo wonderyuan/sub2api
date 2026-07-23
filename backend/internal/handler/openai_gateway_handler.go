@@ -240,6 +240,10 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 
 	setOpsRequestContext(c, "", false)
 	sessionHashBody := body
+	// Classify before legacy body-signal normalization can rewrite /responses
+	// to /responses/compact. Only the native compact path and remote v2 signal
+	// are eligible to bypass an opted-in account's local limit.
+	compactRequest := isOpenAICompactRequest(c, body)
 	body, ok = h.normalizeOpenAIResponsesCompactRequest(c, reqLog, body)
 	if !ok {
 		return
@@ -471,11 +475,19 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		sessionHash = ensureOpenAIPoolModeSessionHash(sessionHash, account)
 		reqLog.Debug("openai.account_selected", zap.Int64("account_id", account.ID), zap.String("account_name", account.Name))
 		setOpsSelectedAccount(c, account.ID, account.Platform)
-		if rejectIfAccountRequestBodyTooLarge(reqLog, account, requestBodyBytes, func(status int, code string, message string) {
+		compactBodyLimitBypass := shouldBypassAccountRequestBodyLimitForCompact(account, requestBodyBytes, compactRequest)
+		if !compactBodyLimitBypass && rejectIfAccountRequestBodyTooLarge(reqLog, account, requestBodyBytes, func(status int, code string, message string) {
 			releaseAcquiredAccountSelection(selection)
 			h.handleStreamingAwareError(c, status, code, message, streamStarted)
 		}) {
 			return
+		}
+		if compactBodyLimitBypass {
+			reqLog.Info("openai.account_request_body_limit_bypassed_for_compact",
+				zap.Int64("account_id", account.ID),
+				zap.Int64("request_body_bytes", requestBodyBytes),
+				zap.Int64("account_request_body_limit_bytes", account.GetRequestBodyLimitBytes()),
+			)
 		}
 
 		accountReleaseFunc, acquired := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, reqStream, &streamStarted, reqLog)
@@ -679,6 +691,27 @@ func isOpenAIRemoteCompactPath(c *gin.Context) bool {
 	}
 	normalizedPath := strings.TrimRight(strings.TrimSpace(c.Request.URL.Path), "/")
 	return strings.HasSuffix(normalizedPath, "/responses/compact")
+}
+
+// isOpenAICompactRequest identifies only Codex remote compact requests.
+func isOpenAICompactRequest(c *gin.Context, body []byte) bool {
+	if isOpenAIRemoteCompactPath(c) {
+		return true
+	}
+	return isBareOpenAIResponsesPath(c) &&
+		service.HasCompactionTriggerInInput(body) &&
+		isOpenAIRemoteCompactionV2Request(c, body)
+}
+
+// shouldBypassAccountRequestBodyLimitForCompact keeps the account-level limit
+// as the default. Only an explicitly opted-in OpenAI account may receive an
+// oversized remote compact request; the global gateway limit still applies.
+func shouldBypassAccountRequestBodyLimitForCompact(account *service.Account, bodyBytes int64, compactRequest bool) bool {
+	if !compactRequest || account == nil || !account.AllowsCompactRequestBodyLimitBypass() {
+		return false
+	}
+	limit := account.GetRequestBodyLimitBytes()
+	return limit > 0 && bodyBytes > limit
 }
 
 // isBareOpenAIResponsesPath 仅匹配裸 /responses 端点（无 /compact 等子路径），

@@ -77,6 +77,115 @@ func TestNormalizeOpenAIResponsesCompactRequest_RemoteV2PathAliasesStayOnRespons
 	}
 }
 
+func TestOpenAICompactRequestBodyLimitBypass(t *testing.T) {
+	compactBody := []byte(`{"model":"gpt-5.6-sol","stream":true,"input":[{"type":"compaction_trigger"}]}`)
+	normalBody := []byte(`{"model":"gpt-5.6-sol","stream":true,"input":"hello"}`)
+	allowedAccount := &service.Account{
+		Platform: service.PlatformOpenAI,
+		Extra: map[string]any{
+			service.RequestBodyLimitExtraKey:              int64(10),
+			service.CompactRequestBodyLimitBypassExtraKey: true,
+		},
+	}
+	blockedAccount := &service.Account{
+		Platform: service.PlatformOpenAI,
+		Extra:    map[string]any{service.RequestBodyLimitExtraKey: int64(10)},
+	}
+
+	tests := []struct {
+		name       string
+		path       string
+		body       []byte
+		betaHeader string
+		account    *service.Account
+		bodyBytes  int64
+		want       bool
+	}{
+		{
+			name:      "explicit compact path with opted-in account",
+			path:      "/v1/responses/compact",
+			body:      normalBody,
+			account:   allowedAccount,
+			bodyBytes: 11,
+			want:      true,
+		},
+		{
+			name:       "remote compaction v2 body signal",
+			path:       "/v1/responses",
+			body:       compactBody,
+			betaHeader: "remote_compaction_v2",
+			account:    allowedAccount,
+			bodyBytes:  11,
+			want:       true,
+		},
+		{
+			name:      "ordinary responses request",
+			path:      "/v1/responses",
+			body:      normalBody,
+			account:   allowedAccount,
+			bodyBytes: 11,
+			want:      false,
+		},
+		{
+			name:      "compact signal without v2 protocol",
+			path:      "/v1/responses",
+			body:      compactBody,
+			account:   allowedAccount,
+			bodyBytes: 11,
+			want:      false,
+		},
+		{
+			name:      "account has not opted in",
+			path:      "/v1/responses/compact",
+			body:      normalBody,
+			account:   blockedAccount,
+			bodyBytes: 11,
+			want:      false,
+		},
+		{
+			name:      "request remains within account limit",
+			path:      "/v1/responses/compact",
+			body:      normalBody,
+			account:   allowedAccount,
+			bodyBytes: 10,
+			want:      false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := newCompactBodySignalTestContext(t, tt.path, tt.body)
+			if tt.betaHeader != "" {
+				c.Request.Header.Set("x-codex-beta-features", tt.betaHeader)
+			}
+			compactRequest := isOpenAICompactRequest(c, tt.body)
+			require.Equal(t, tt.want, shouldBypassAccountRequestBodyLimitForCompact(tt.account, tt.bodyBytes, compactRequest))
+		})
+	}
+}
+
+func TestOpenAICompactRequestBodyLimitBypass_LegacyBodySignalRemainsLimitedAfterNormalization(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.6-sol","stream":true,"input":[{"type":"compaction_trigger"}]}`)
+	account := &service.Account{
+		Platform: service.PlatformOpenAI,
+		Extra: map[string]any{
+			service.RequestBodyLimitExtraKey:              int64(10),
+			service.CompactRequestBodyLimitBypassExtraKey: true,
+		},
+	}
+	c := newCompactBodySignalTestContext(t, "/v1/responses", body)
+
+	// The decision must use the original request. Normalization below rewrites
+	// legacy body-signals to /responses/compact for upstream compatibility.
+	compactRequest := isOpenAICompactRequest(c, body)
+	h := &OpenAIGatewayHandler{}
+	_, ok := h.normalizeOpenAIResponsesCompactRequest(c, zap.NewNop(), body)
+	require.True(t, ok)
+	require.True(t, isOpenAIRemoteCompactPath(c))
+	require.False(t, compactRequest)
+	require.False(t, shouldBypassAccountRequestBodyLimitForCompact(account, 11, compactRequest))
+}
+
 func TestNormalizeOpenAIResponsesCompactRequest_BodySignalTrailingSlashPromoted(t *testing.T) {
 	h := &OpenAIGatewayHandler{}
 	body := []byte(`{"model":"gpt-5.5","input":[{"type":"compaction_trigger"}]}`)

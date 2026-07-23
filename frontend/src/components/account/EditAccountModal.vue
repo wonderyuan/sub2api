@@ -1456,6 +1456,23 @@
           :placeholder="t('admin.accounts.requestBodyLimitPlaceholder')"
         />
         <p class="input-hint">{{ t('admin.accounts.requestBodyLimitHint') }}</p>
+        <label
+          v-if="account.platform === 'openai' && requestBodyLimitMB != null && requestBodyLimitMB > 0"
+          class="mt-3 flex items-start gap-2 text-sm text-gray-700 dark:text-gray-300"
+        >
+          <input
+            v-model="allowCompactRequestBodyLimitBypass"
+            type="checkbox"
+            class="mt-0.5"
+            data-testid="allow-compact-request-body-limit-bypass"
+          />
+          <span>
+            {{ t('admin.accounts.allowCompactRequestBodyLimitBypass') }}
+            <span class="mt-1 block text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.allowCompactRequestBodyLimitBypassHint') }}
+            </span>
+          </span>
+        </label>
       </div>
 
       <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
@@ -2827,6 +2844,7 @@ const rpmStrategy = ref<'tiered' | 'sticky_exempt'>('tiered')
 const rpmStickyBuffer = ref<number | null>(null)
 const userMsgQueueMode = ref('')
 const requestBodyLimitMB = ref<number | null>(null)
+const allowCompactRequestBodyLimitBypass = ref(false)
 const umqModeOptions = computed(() => [
   { value: '', label: t('admin.accounts.quotaControl.rpmLimit.umqModeOff') },
   { value: 'throttle', label: t('admin.accounts.quotaControl.rpmLimit.umqModeThrottle') },
@@ -3278,6 +3296,8 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   requestBodyLimitMB.value = Number.isFinite(requestBodyLimitBytes) && requestBodyLimitBytes > 0
     ? Math.round((requestBodyLimitBytes / 1024 / 1024) * 10) / 10
     : null
+  allowCompactRequestBodyLimitBypass.value = newAccount.platform === 'openai' &&
+    extra?.allow_compact_request_body_limit_bypass === true
 	upstreamBillingAutoProbeEnabled.value = extra?.upstream_billing_probe_enabled === true
 
   // Load OpenAI passthrough toggle (OpenAI OAuth/SetupToken/API Key)
@@ -4671,6 +4691,13 @@ const handleSubmit = async () => {
         newExtra.request_body_limit_bytes = Math.floor(limitMB * 1024 * 1024)
       } else {
         delete newExtra.request_body_limit_bytes
+      }
+      if (props.account.platform === 'openai') {
+        if (allowCompactRequestBodyLimitBypass.value && Number.isFinite(limitMB) && limitMB > 0) {
+          newExtra.allow_compact_request_body_limit_bypass = true
+        } else {
+          delete newExtra.allow_compact_request_body_limit_bypass
+        }
       }
       updatePayload.extra = newExtra
     }
