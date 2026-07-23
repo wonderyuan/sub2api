@@ -36,19 +36,46 @@ vi.mock('vue-i18n', () => ({
 }))
 
 describe('OpsUserConcurrencyTrendChart', () => {
-  it('shows system and ranked user demand series and can pin a selected user', async () => {
+  it('shows normal, heavy, and recovery charts with shared user series', async () => {
     getUserConcurrencyTrend.mockResolvedValue({
       enabled: true,
       bucket: 'minute',
       current: { in_use: 7, waiting: 2, demand: 9 },
+      current_lanes: {
+        normal: { in_use: 4, waiting: 1, demand: 5 },
+        heavy: { in_use: 2, waiting: 1, demand: 3 },
+        recovery: { in_use: 1, waiting: 0, demand: 1 }
+      },
       points: [
         {
           bucket_start: '2026-07-19T12:00:00Z',
           system: { peak_in_use: 7, peak_waiting: 2, peak_demand: 9 },
+          system_lanes: {
+            normal: { peak_in_use: 4, peak_waiting: 1, peak_demand: 5 },
+            heavy: { peak_in_use: 2, peak_waiting: 1, peak_demand: 3 },
+            recovery: { peak_in_use: 1, peak_waiting: 0, peak_demand: 1 }
+          },
           users: {
             '1': { peak_in_use: 4, peak_waiting: 1, peak_demand: 5 },
             '2': { peak_in_use: 2, peak_waiting: 0, peak_demand: 2 },
             '6': { peak_in_use: 1, peak_waiting: 1, peak_demand: 2 }
+          },
+          user_lanes: {
+            '1': {
+              normal: { peak_in_use: 2, peak_waiting: 1, peak_demand: 3 },
+              heavy: { peak_in_use: 2, peak_waiting: 0, peak_demand: 2 },
+              recovery: { peak_in_use: 0, peak_waiting: 0, peak_demand: 0 }
+            },
+            '2': {
+              normal: { peak_in_use: 2, peak_waiting: 0, peak_demand: 2 },
+              heavy: { peak_in_use: 0, peak_waiting: 0, peak_demand: 0 },
+              recovery: { peak_in_use: 0, peak_waiting: 0, peak_demand: 0 }
+            },
+            '6': {
+              normal: { peak_in_use: 0, peak_waiting: 0, peak_demand: 0 },
+              heavy: { peak_in_use: 0, peak_waiting: 1, peak_demand: 1 },
+              recovery: { peak_in_use: 1, peak_waiting: 0, peak_demand: 1 }
+            }
           }
         }
       ],
@@ -62,17 +89,20 @@ describe('OpsUserConcurrencyTrendChart', () => {
     const wrapper = mount(OpsUserConcurrencyTrendChart)
     await flushPromises()
 
-    const chart = wrapper.findComponent({ name: 'LineChartStub' })
-    expect(chart.exists()).toBe(true)
-    expect(chart.props('data').datasets.map((dataset: any) => dataset.label)).toEqual([
-      'admin.ops.concurrencyTrend.systemDemand',
+    const charts = wrapper.findAllComponents({ name: 'LineChartStub' })
+    expect(charts).toHaveLength(3)
+    expect(charts[0].props('data').datasets.map((dataset: any) => dataset.label)).toEqual([
+      'admin.ops.concurrencyTrend.systemActive',
       'admin.ops.concurrencyTrend.systemWaiting',
       'alpha',
-      'beta',
-      'zeta'
+      'beta'
     ])
+    expect(charts[0].props('data').datasets[0].data).toEqual([4])
+    expect(charts[1].props('data').datasets[0].data).toEqual([2])
+    expect(charts[1].props('data').datasets[1].data).toEqual([1])
+    expect(charts[2].props('data').datasets[0].data).toEqual([1])
 
     await wrapper.find('select').setValue('6')
-    expect(wrapper.text()).toContain('zeta')
+    expect(wrapper.findAll('button').some(button => button.text().includes('zeta'))).toBe(true)
   })
 })

@@ -354,14 +354,6 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			}
 			account := selection.Account
 			setOpsSelectedAccount(c, account.ID, account.Platform)
-			if rejectIfAccountRequestBodyTooLarge(reqLog, account, requestBodyBytes, func(status int, code string, message string) {
-				if selection.Acquired && selection.ReleaseFunc != nil {
-					selection.ReleaseFunc()
-				}
-				h.handleStreamingAwareError(c, status, code, message, streamStarted)
-			}) {
-				return
-			}
 
 			// 检查请求拦截（预热请求、SUGGESTION MODE等）
 			if account.IsInterceptWarmupEnabled() {
@@ -651,14 +643,6 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			}
 			account := selection.Account
 			setOpsSelectedAccount(c, account.ID, account.Platform)
-			if rejectIfAccountRequestBodyTooLarge(reqLog, account, requestBodyBytes, func(status int, code string, message string) {
-				if selection.Acquired && selection.ReleaseFunc != nil {
-					selection.ReleaseFunc()
-				}
-				h.handleStreamingAwareError(c, status, code, message, streamStarted)
-			}) {
-				return
-			}
 
 			// [DEBUG-STICKY] 打印账号选择结果
 			reqLog.Info("sticky.account_selected",
@@ -1801,7 +1785,7 @@ func (h *GatewayHandler) handleStreamingAwareError(c *gin.Context, status int, e
 		// response.completed/failed/incomplete/cancelled 集合。
 		// Anthropic-backed Responses 路径同样会因为通用 error 帧被拒。
 		if inboundIsResponses(c) {
-			if writeResponsesFailedSSE(c, errType, message) {
+			if writeResponsesFailedSSE(c, errType, "", message) {
 				return
 			}
 		}

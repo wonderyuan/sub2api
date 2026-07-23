@@ -27,10 +27,24 @@ type ConcurrencySnapshot struct {
 	Demand  int `json:"demand"`
 }
 
+type ConcurrencyLanePeaks struct {
+	Normal   ConcurrencyPeak `json:"normal"`
+	Heavy    ConcurrencyPeak `json:"heavy"`
+	Recovery ConcurrencyPeak `json:"recovery"`
+}
+
+type ConcurrencyLaneSnapshots struct {
+	Normal   ConcurrencySnapshot `json:"normal"`
+	Heavy    ConcurrencySnapshot `json:"heavy"`
+	Recovery ConcurrencySnapshot `json:"recovery"`
+}
+
 type UserConcurrencyTrendPoint struct {
-	BucketStart time.Time                 `json:"bucket_start"`
-	System      ConcurrencyPeak           `json:"system"`
-	Users       map[int64]ConcurrencyPeak `json:"users"`
+	BucketStart time.Time                      `json:"bucket_start"`
+	System      ConcurrencyPeak                `json:"system"`
+	Users       map[int64]ConcurrencyPeak      `json:"users"`
+	SystemLanes ConcurrencyLanePeaks           `json:"system_lanes"`
+	UserLanes   map[int64]ConcurrencyLanePeaks `json:"user_lanes"`
 }
 
 type UserConcurrencyTrend struct {
@@ -44,7 +58,8 @@ type UserConcurrencyTrend struct {
 // It is optional so lightweight test stubs and alternative caches remain compatible.
 type UserConcurrencyTrendCache interface {
 	GetActiveUserLoads(ctx context.Context) (map[int64]*UserLoadInfo, error)
-	MergeUserConcurrencyTrend(ctx context.Context, bucketStart time.Time, users map[int64]ConcurrencyPeak, system ConcurrencyPeak) error
+	GetActiveRequestBodyLaneLoads(ctx context.Context) (map[int64]RequestBodyLaneUserLoad, error)
+	MergeUserConcurrencyTrend(ctx context.Context, bucketStart time.Time, users map[int64]ConcurrencyPeak, system ConcurrencyPeak, userLanes map[int64]ConcurrencyLanePeaks, systemLanes ConcurrencyLanePeaks) error
 	GetUserConcurrencyTrend(ctx context.Context, start, end time.Time) (*UserConcurrencyTrend, error)
 }
 
@@ -57,15 +72,17 @@ type userConcurrencyStateCache interface {
 }
 
 type userConcurrencyStateEvent struct {
-	userID  int64
-	active  *int
-	waiting *int
-	at      time.Time
+	userID          int64
+	active          *int
+	waiting         *int
+	requestBodyLoad *RequestBodyLaneUserLoad
+	at              time.Time
 }
 
 type userConcurrencyLiveState struct {
-	active  int
-	waiting int
+	active          int
+	waiting         int
+	requestBodyLoad RequestBodyLaneUserLoad
 }
 
 type userConcurrencyTrendRecorder struct {
@@ -121,8 +138,11 @@ func (r *userConcurrencyTrendRecorder) run() {
 	live := make(map[int64]userConcurrencyLiveState)
 	pending := make(map[time.Time]map[int64]ConcurrencyPeak)
 	systemPending := make(map[time.Time]ConcurrencyPeak)
+	userLanesPending := make(map[time.Time]map[int64]ConcurrencyLanePeaks)
+	systemLanesPending := make(map[time.Time]ConcurrencyLanePeaks)
 	totalActive := 0
 	totalWaiting := 0
+	totalLanes := ConcurrencyLaneSnapshots{}
 
 	flushTicker := time.NewTicker(userConcurrencyTrendFlushInterval)
 	defer flushTicker.Stop()
@@ -130,15 +150,22 @@ func (r *userConcurrencyTrendRecorder) run() {
 	reconcile := func(now time.Time) {
 		ctx, cancel := context.WithTimeout(context.Background(), userConcurrencyTrendSampleTimeout)
 		loads, err := r.cache.GetActiveUserLoads(ctx)
-		cancel()
 		if err != nil {
+			cancel()
 			log.Printf("[ConcurrencyTrend] reconcile active users failed: %v", err)
 			return
 		}
+		bodyLoads, err := r.cache.GetActiveRequestBodyLaneLoads(ctx)
+		cancel()
+		if err != nil {
+			log.Printf("[ConcurrencyTrend] reconcile request body lanes failed: %v", err)
+			return
+		}
 
-		live = make(map[int64]userConcurrencyLiveState, len(loads))
+		live = make(map[int64]userConcurrencyLiveState, max(len(loads), len(bodyLoads)))
 		totalActive = 0
 		totalWaiting = 0
+		totalLanes = ConcurrencyLaneSnapshots{}
 		for userID, load := range loads {
 			if load == nil || (load.CurrentConcurrency <= 0 && load.WaitingCount <= 0) {
 				continue
@@ -151,13 +178,21 @@ func (r *userConcurrencyTrendRecorder) run() {
 			totalActive += state.active
 			totalWaiting += state.waiting
 		}
-		recordConcurrencyTrendSample(pending, systemPending, now, live, 0, totalActive, totalWaiting)
+		for userID, bodyLoad := range bodyLoads {
+			state := live[userID]
+			state.requestBodyLoad = bodyLoad
+			live[userID] = state
+		}
+		for _, state := range live {
+			addConcurrencyLaneSnapshots(&totalLanes, concurrencyLaneSnapshotsForState(state), 1)
+		}
+		recordConcurrencyTrendSample(pending, systemPending, userLanesPending, systemLanesPending, now, live, 0, totalActive, totalWaiting, totalLanes)
 	}
 
 	flush := func() {
 		for bucket, users := range pending {
 			ctx, cancel := context.WithTimeout(context.Background(), userConcurrencyTrendSampleTimeout)
-			err := r.cache.MergeUserConcurrencyTrend(ctx, bucket, users, systemPending[bucket])
+			err := r.cache.MergeUserConcurrencyTrend(ctx, bucket, users, systemPending[bucket], userLanesPending[bucket], systemLanesPending[bucket])
 			cancel()
 			if err != nil {
 				log.Printf("[ConcurrencyTrend] flush bucket %s failed: %v", bucket.Format(time.RFC3339), err)
@@ -165,6 +200,8 @@ func (r *userConcurrencyTrendRecorder) run() {
 			}
 			delete(pending, bucket)
 			delete(systemPending, bucket)
+			delete(userLanesPending, bucket)
+			delete(systemLanesPending, bucket)
 		}
 	}
 
@@ -173,6 +210,7 @@ func (r *userConcurrencyTrendRecorder) run() {
 		select {
 		case event := <-r.events:
 			state := live[event.userID]
+			previousLanes := concurrencyLaneSnapshotsForState(state)
 			if event.active != nil {
 				next := max(*event.active, 0)
 				totalActive += next - state.active
@@ -183,12 +221,18 @@ func (r *userConcurrencyTrendRecorder) run() {
 				totalWaiting += next - state.waiting
 				state.waiting = next
 			}
-			if state.active == 0 && state.waiting == 0 {
+			if event.requestBodyLoad != nil {
+				state.requestBodyLoad = *event.requestBodyLoad
+			}
+			nextLanes := concurrencyLaneSnapshotsForState(state)
+			addConcurrencyLaneSnapshots(&totalLanes, previousLanes, -1)
+			addConcurrencyLaneSnapshots(&totalLanes, nextLanes, 1)
+			if state.active == 0 && state.waiting == 0 && !requestBodyLaneUserLoadHasActivity(state.requestBodyLoad) {
 				delete(live, event.userID)
 			} else {
 				live[event.userID] = state
 			}
-			recordConcurrencyTrendSample(pending, systemPending, event.at, live, event.userID, totalActive, totalWaiting)
+			recordConcurrencyTrendSample(pending, systemPending, userLanesPending, systemLanesPending, event.at, live, event.userID, totalActive, totalWaiting, totalLanes)
 		case now := <-flushTicker.C:
 			reconcile(now.UTC())
 			flush()
@@ -206,13 +250,16 @@ func (r *userConcurrencyTrendRecorder) run() {
 func recordConcurrencyTrendSample(
 	pending map[time.Time]map[int64]ConcurrencyPeak,
 	systemPending map[time.Time]ConcurrencyPeak,
+	userLanesPending map[time.Time]map[int64]ConcurrencyLanePeaks,
+	systemLanesPending map[time.Time]ConcurrencyLanePeaks,
 	at time.Time,
 	live map[int64]userConcurrencyLiveState,
 	changedUserID int64,
 	totalActive int,
 	totalWaiting int,
+	totalLanes ConcurrencyLaneSnapshots,
 ) {
-	if totalActive <= 0 && totalWaiting <= 0 && len(live) == 0 {
+	if totalActive <= 0 && totalWaiting <= 0 && concurrencyLaneSnapshotsDemand(totalLanes) <= 0 && len(live) == 0 {
 		return
 	}
 	bucket := at.UTC().Truncate(time.Minute)
@@ -221,8 +268,14 @@ func recordConcurrencyTrendSample(
 		users = make(map[int64]ConcurrencyPeak)
 		pending[bucket] = users
 	}
+	userLanes := userLanesPending[bucket]
+	if userLanes == nil {
+		userLanes = make(map[int64]ConcurrencyLanePeaks)
+		userLanesPending[bucket] = userLanes
+	}
 	recordUser := func(userID int64, state userConcurrencyLiveState) {
-		if state.active <= 0 && state.waiting <= 0 {
+		lanes := concurrencyLaneSnapshotsForState(state)
+		if state.active <= 0 && state.waiting <= 0 && concurrencyLaneSnapshotsDemand(lanes) <= 0 {
 			return
 		}
 		peak := users[userID]
@@ -230,6 +283,7 @@ func recordConcurrencyTrendSample(
 		peak.PeakWaiting = max(peak.PeakWaiting, state.waiting)
 		peak.PeakDemand = max(peak.PeakDemand, state.active+state.waiting)
 		users[userID] = peak
+		userLanes[userID] = mergeConcurrencyLanePeaks(userLanes[userID], lanes)
 	}
 	if changedUserID > 0 {
 		if state, ok := live[changedUserID]; ok {
@@ -246,13 +300,90 @@ func recordConcurrencyTrendSample(
 	system.PeakWaiting = max(system.PeakWaiting, totalWaiting)
 	system.PeakDemand = max(system.PeakDemand, totalActive+totalWaiting)
 	systemPending[bucket] = system
+	systemLanesPending[bucket] = mergeConcurrencyLanePeaks(systemLanesPending[bucket], totalLanes)
+}
+
+func requestBodyLaneUserLoadHasActivity(load RequestBodyLaneUserLoad) bool {
+	return load.HeavyActive > 0 || load.HeavyWaiting > 0 || load.RecoveryActive > 0 || load.RecoveryWaiting > 0 ||
+		load.PendingActive > 0 || load.PendingWaiting > 0
+}
+
+func concurrencyLaneSnapshotsForState(state userConcurrencyLiveState) ConcurrencyLaneSnapshots {
+	// OpenAI Responses requests reserve their base user demand while account
+	// policy classification is pending and throughout heavy/recovery handling.
+	// This prevents acquisition and failover transitions from appearing as
+	// short-lived normal traffic.
+	normalActive := max(state.active-max(state.requestBodyLoad.PendingActive, 0), 0)
+	normalWaiting := max(state.waiting-max(state.requestBodyLoad.PendingWaiting, 0), 0)
+	heavyActive := max(state.requestBodyLoad.HeavyActive, 0)
+	heavyWaiting := max(state.requestBodyLoad.HeavyWaiting, 0)
+	recoveryActive := max(state.requestBodyLoad.RecoveryActive, 0)
+	recoveryWaiting := max(state.requestBodyLoad.RecoveryWaiting, 0)
+	return ConcurrencyLaneSnapshots{
+		Normal:   ConcurrencySnapshot{InUse: normalActive, Waiting: normalWaiting, Demand: normalActive + normalWaiting},
+		Heavy:    ConcurrencySnapshot{InUse: heavyActive, Waiting: heavyWaiting, Demand: heavyActive + heavyWaiting},
+		Recovery: ConcurrencySnapshot{InUse: recoveryActive, Waiting: recoveryWaiting, Demand: recoveryActive + recoveryWaiting},
+	}
+}
+
+func addConcurrencyLaneSnapshots(total *ConcurrencyLaneSnapshots, value ConcurrencyLaneSnapshots, multiplier int) {
+	if total == nil {
+		return
+	}
+	add := func(target *ConcurrencySnapshot, source ConcurrencySnapshot) {
+		target.InUse = max(target.InUse+source.InUse*multiplier, 0)
+		target.Waiting = max(target.Waiting+source.Waiting*multiplier, 0)
+		target.Demand = target.InUse + target.Waiting
+	}
+	add(&total.Normal, value.Normal)
+	add(&total.Heavy, value.Heavy)
+	add(&total.Recovery, value.Recovery)
+}
+
+func concurrencyLaneSnapshotsDemand(value ConcurrencyLaneSnapshots) int {
+	return value.Normal.Demand + value.Heavy.Demand + value.Recovery.Demand
+}
+
+func mergeConcurrencyLanePeaks(current ConcurrencyLanePeaks, sample ConcurrencyLaneSnapshots) ConcurrencyLanePeaks {
+	merge := func(peak ConcurrencyPeak, snapshot ConcurrencySnapshot) ConcurrencyPeak {
+		peak.PeakInUse = max(peak.PeakInUse, snapshot.InUse)
+		peak.PeakWaiting = max(peak.PeakWaiting, snapshot.Waiting)
+		peak.PeakDemand = max(peak.PeakDemand, snapshot.Demand)
+		return peak
+	}
+	current.Normal = merge(current.Normal, sample.Normal)
+	current.Heavy = merge(current.Heavy, sample.Heavy)
+	current.Recovery = merge(current.Recovery, sample.Recovery)
+	return current
 }
 
 func (s *ConcurrencyService) observeUserConcurrencyState(userID int64, active, waiting *int, at time.Time) {
+	s.observeUserConcurrencyEvent(userID, active, waiting, nil, at)
+}
+
+func (s *ConcurrencyService) observeUserConcurrencyEvent(
+	userID int64,
+	active, waiting *int,
+	requestBodyLoad *RequestBodyLaneUserLoad,
+	at time.Time,
+) {
 	if s == nil || s.trendRecorder == nil {
 		return
 	}
-	s.trendRecorder.observe(userConcurrencyStateEvent{userID: userID, active: active, waiting: waiting, at: at})
+	s.trendRecorder.observe(userConcurrencyStateEvent{
+		userID:          userID,
+		active:          active,
+		waiting:         waiting,
+		requestBodyLoad: requestBodyLoad,
+		at:              at,
+	})
+}
+
+func (s *ConcurrencyService) observeRequestBodyLaneState(userID int64, load RequestBodyLaneUserLoad, at time.Time) {
+	if s == nil || s.trendRecorder == nil {
+		return
+	}
+	s.trendRecorder.observe(userConcurrencyStateEvent{userID: userID, requestBodyLoad: &load, at: at})
 }
 
 func (s *ConcurrencyService) GetUserConcurrencyTrend(ctx context.Context, now time.Time) (*UserConcurrencyTrend, error) {
@@ -264,7 +395,11 @@ func (s *ConcurrencyService) GetUserConcurrencyTrend(ctx context.Context, now ti
 	if s == nil || s.trendRecorder == nil || s.trendRecorder.cache == nil {
 		points := make([]UserConcurrencyTrendPoint, 0, 60)
 		for bucket := start; !bucket.After(end); bucket = bucket.Add(time.Minute) {
-			points = append(points, UserConcurrencyTrendPoint{BucketStart: bucket, Users: map[int64]ConcurrencyPeak{}})
+			points = append(points, UserConcurrencyTrendPoint{
+				BucketStart: bucket,
+				Users:       map[int64]ConcurrencyPeak{},
+				UserLanes:   map[int64]ConcurrencyLanePeaks{},
+			})
 		}
 		return &UserConcurrencyTrend{StartTime: start, EndTime: end, Bucket: "minute", Points: points}, nil
 	}
@@ -276,4 +411,11 @@ func (s *ConcurrencyService) GetCurrentUserConcurrencyLoads(ctx context.Context)
 		return map[int64]*UserLoadInfo{}, nil
 	}
 	return s.trendRecorder.cache.GetActiveUserLoads(ctx)
+}
+
+func (s *ConcurrencyService) GetCurrentRequestBodyLaneLoads(ctx context.Context) (map[int64]RequestBodyLaneUserLoad, error) {
+	if s == nil || s.trendRecorder == nil || s.trendRecorder.cache == nil {
+		return map[int64]RequestBodyLaneUserLoad{}, nil
+	}
+	return s.trendRecorder.cache.GetActiveRequestBodyLaneLoads(ctx)
 }

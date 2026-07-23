@@ -165,12 +165,6 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 		}
 		account := selection.Account
 		setOpsSelectedAccount(c, account.ID, account.Platform)
-		if rejectIfAccountRequestBodyTooLarge(reqLog, account, requestBodyBytes, func(status int, code string, message string) {
-			releaseAcquiredAccountSelection(selection)
-			h.errorResponse(c, status, code, message)
-		}) {
-			return
-		}
 
 		accountReleaseFunc, accountAcquired := h.acquireResponsesAccountSlot(c, apiKey.GroupID, "", selection, false, &streamStarted, reqLog)
 		if !accountAcquired {

@@ -422,7 +422,11 @@ func (s *OpsService) GetUserConcurrencyTrend(ctx context.Context) (*UserConcurre
 		start := end.Add(-59 * time.Minute)
 		points := make([]UserConcurrencyTrendPoint, 0, 60)
 		for bucket := start; !bucket.After(end); bucket = bucket.Add(time.Minute) {
-			points = append(points, UserConcurrencyTrendPoint{BucketStart: bucket, Users: map[int64]ConcurrencyPeak{}})
+			points = append(points, UserConcurrencyTrendPoint{
+				BucketStart: bucket,
+				Users:       map[int64]ConcurrencyPeak{},
+				UserLanes:   map[int64]ConcurrencyLanePeaks{},
+			})
 		}
 		return &UserConcurrencyTrendResponse{StartTime: start, EndTime: end, Bucket: "minute", Points: points, Users: map[int64]UserConcurrencyTrendUser{}}, nil
 	}
@@ -434,14 +438,22 @@ func (s *OpsService) GetUserConcurrencyTrend(ctx context.Context) (*UserConcurre
 	if err != nil {
 		return nil, err
 	}
+	currentBodyLoads, err := s.concurrencyService.GetCurrentRequestBodyLaneLoads(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	seen := make(map[int64]struct{})
 	for _, point := range trend.Points {
 		for userID := range point.Users {
 			seen[userID] = struct{}{}
 		}
+		for userID := range point.UserLanes {
+			seen[userID] = struct{}{}
+		}
 	}
 	current := ConcurrencySnapshot{}
+	currentStates := make(map[int64]userConcurrencyLiveState, max(len(currentLoads), len(currentBodyLoads)))
 	for userID, load := range currentLoads {
 		if load == nil {
 			continue
@@ -449,8 +461,22 @@ func (s *OpsService) GetUserConcurrencyTrend(ctx context.Context) (*UserConcurre
 		seen[userID] = struct{}{}
 		current.InUse += max(load.CurrentConcurrency, 0)
 		current.Waiting += max(load.WaitingCount, 0)
+		currentStates[userID] = userConcurrencyLiveState{
+			active:  max(load.CurrentConcurrency, 0),
+			waiting: max(load.WaitingCount, 0),
+		}
+	}
+	for userID, bodyLoad := range currentBodyLoads {
+		seen[userID] = struct{}{}
+		state := currentStates[userID]
+		state.requestBodyLoad = bodyLoad
+		currentStates[userID] = state
 	}
 	current.Demand = current.InUse + current.Waiting
+	currentLanes := ConcurrencyLaneSnapshots{}
+	for _, state := range currentStates {
+		addConcurrencyLaneSnapshots(&currentLanes, concurrencyLaneSnapshotsForState(state), 1)
+	}
 	metadata := make(map[int64]UserConcurrencyTrendUser, len(seen))
 	if len(seen) > 0 {
 		ids := make([]int64, 0, len(seen))
@@ -481,11 +507,12 @@ func (s *OpsService) GetUserConcurrencyTrend(ctx context.Context) (*UserConcurre
 	}
 
 	return &UserConcurrencyTrendResponse{
-		StartTime: trend.StartTime,
-		EndTime:   trend.EndTime,
-		Bucket:    trend.Bucket,
-		Current:   current,
-		Points:    trend.Points,
-		Users:     metadata,
+		StartTime:    trend.StartTime,
+		EndTime:      trend.EndTime,
+		Bucket:       trend.Bucket,
+		Current:      current,
+		CurrentLanes: currentLanes,
+		Points:       trend.Points,
+		Users:        metadata,
 	}, nil
 }

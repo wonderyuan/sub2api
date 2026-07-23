@@ -2,16 +2,46 @@ package handler
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	pkghttputil "github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
+
+func TestRequestBodyAdmissionMaximumMatchesDecompressionMaximum(t *testing.T) {
+	require.Equal(t, pkghttputil.MaxDecompressedBodySize, service.MaxRequestBodyAdmissionLimitBytes)
+}
+
+type requestBodyLaneTestCache struct {
+	*concurrencyCacheMock
+	acquireErr error
+	wait       bool
+}
+
+func (c *requestBodyLaneTestCache) AcquireRequestBodyLane(context.Context, service.RequestBodyLane, int64, int64, int, int, string) (bool, error) {
+	return false, c.acquireErr
+}
+
+func (c *requestBodyLaneTestCache) ReleaseRequestBodyLane(context.Context, service.RequestBodyLane, int64, int64, int, string) error {
+	return nil
+}
+
+func (c *requestBodyLaneTestCache) IncrementRequestBodyLaneWaitCount(context.Context, int64, int, string) (bool, error) {
+	return c.wait, nil
+}
+
+func (c *requestBodyLaneTestCache) DecrementRequestBodyLaneWaitCount(context.Context, int64, string) error {
+	return nil
+}
 
 func TestRequestBodyLimitTooLarge(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -45,69 +75,143 @@ func TestRequestBodyLimitTooLarge(t *testing.T) {
 	require.Contains(t, recorder.Body.String(), buildBodyTooLargeMessage(limit))
 }
 
-func TestRejectIfAccountRequestBodyTooLarge(t *testing.T) {
-	tests := []struct {
-		name       string
-		account    *service.Account
-		bodyBytes  int64
-		wantReject bool
-	}{
-		{
-			name:      "nil account does not reject",
-			account:   nil,
-			bodyBytes: 11,
-		},
-		{
-			name:      "zero limit is unlimited",
-			account:   &service.Account{Extra: map[string]any{service.RequestBodyLimitExtraKey: int64(0)}},
-			bodyBytes: 11,
-		},
-		{
-			name:      "equal to limit is accepted",
-			account:   &service.Account{Extra: map[string]any{service.RequestBodyLimitExtraKey: int64(10)}},
-			bodyBytes: 10,
-		},
-		{
-			name:       "above limit is rejected",
-			account:    &service.Account{Extra: map[string]any{service.RequestBodyLimitExtraKey: int64(10)}},
-			bodyBytes:  11,
-			wantReject: true,
+func TestRequestBodyAdmissionPolicyIgnoresLegacyHardLimit(t *testing.T) {
+	account := &service.Account{
+		Platform: service.PlatformOpenAI,
+		Extra: map[string]any{
+			service.LegacyRequestBodyLimitExtraKey:       int64(10),
+			service.LegacyCompactBodyLimitBypassExtraKey: true,
 		},
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			called := false
-			rejected := rejectIfAccountRequestBodyTooLarge(nil, tt.account, tt.bodyBytes, func(status int, code string, message string) {
-				called = true
-				require.Equal(t, http.StatusRequestEntityTooLarge, status)
-				require.Equal(t, "request_body_too_large", code)
-				require.Contains(t, message, "11 bytes")
-				require.Contains(t, message, "10 bytes")
-			})
-
-			require.Equal(t, tt.wantReject, rejected)
-			require.Equal(t, tt.wantReject, called)
-		})
-	}
+	require.Equal(t, service.RequestBodyLaneDisabled, account.GetRequestBodyAdmissionPolicy().Classify(100, false))
 }
 
-func TestRejectIfAccountRequestBodyTooLargeReleasesAcquiredSelection(t *testing.T) {
+func TestRequestBodyAdmissionPolicyClassifiesConfiguredLanes(t *testing.T) {
+	account := &service.Account{
+		Platform: service.PlatformOpenAI,
+		Extra: map[string]any{
+			service.RequestBodyAdmissionEnabledExtraKey: true,
+			service.RequestBodyNormalLimitExtraKey:      int64(10),
+			service.RequestBodyHeavyLimitExtraKey:       int64(20),
+			service.RequestBodyRecoveryLimitExtraKey:    int64(30),
+		},
+	}
+	policy := account.GetRequestBodyAdmissionPolicy()
+	require.Equal(t, service.RequestBodyLaneNormal, policy.Classify(10, false))
+	require.Equal(t, service.RequestBodyLaneHeavy, policy.Classify(11, false))
+	require.Equal(t, service.RequestBodyLaneRecovery, policy.Classify(21, false))
+	require.Equal(t, service.RequestBodyLaneRecovery, policy.Classify(1, true))
+	require.Equal(t, service.RequestBodyLaneRejected, policy.Classify(31, true))
+}
+
+func TestReleaseSelectionForRequestBodyLaneWait(t *testing.T) {
 	released := 0
 	selection := &service.AccountSelectionResult{
+		Account:  &service.Account{ID: 9, Concurrency: 10},
 		Acquired: true,
 		ReleaseFunc: func() {
 			released++
 		},
 	}
-	account := &service.Account{
-		Extra: map[string]any{service.RequestBodyLimitExtraKey: int64(10)},
-	}
 
-	rejected := rejectIfAccountRequestBodyTooLarge(nil, account, 11, func(_ int, _ string, _ string) {
-		releaseAcquiredAccountSelection(selection)
-	})
-
-	require.True(t, rejected)
+	releaseSelectionForRequestBodyLaneWait(selection)
 	require.Equal(t, 1, released)
+	require.False(t, selection.Acquired)
+	require.Nil(t, selection.ReleaseFunc)
+	require.NotNil(t, selection.WaitPlan)
+	require.Equal(t, 10, selection.WaitPlan.MaxConcurrency)
+}
+
+func TestRequestBodyAdmissionRejectionUsesStandardErrorTypeAndStableCode(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", http.NoBody)
+	selection := &service.AccountSelectionResult{Account: &service.Account{
+		ID:       9,
+		Platform: service.PlatformOpenAI,
+		Extra: map[string]any{
+			service.RequestBodyAdmissionEnabledExtraKey: true,
+			service.RequestBodyNormalLimitExtraKey:      int64(10),
+			service.RequestBodyHeavyLimitExtraKey:       int64(20),
+			service.RequestBodyRecoveryLimitExtraKey:    int64(30),
+		},
+	}}
+	streamStarted := false
+
+	_, admitted := (&OpenAIGatewayHandler{}).acquireResponsesRequestBodyLane(
+		c, nil, selection, 1, 31, false, false, &streamStarted, nil, nil,
+	)
+
+	require.False(t, admitted)
+	require.Equal(t, http.StatusRequestEntityTooLarge, recorder.Code)
+	require.Equal(t, "invalid_request_error", gjson.GetBytes(recorder.Body.Bytes(), "error.type").String())
+	require.Equal(t, requestBodyRecoveryLimitExceededCode, gjson.GetBytes(recorder.Body.Bytes(), "error.code").String())
+}
+
+func TestRequestBodyAdmissionQueueFullUsesRateLimitTypeAndStableCode(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", http.NoBody)
+	cache := &requestBodyLaneTestCache{concurrencyCacheMock: &concurrencyCacheMock{}}
+	h := &OpenAIGatewayHandler{
+		concurrencyHelper: NewConcurrencyHelper(service.NewConcurrencyService(cache), SSEPingFormatNone, 0),
+	}
+	selection := &service.AccountSelectionResult{Account: &service.Account{
+		ID:          9,
+		Platform:    service.PlatformOpenAI,
+		Concurrency: 5,
+		Extra: map[string]any{
+			service.RequestBodyAdmissionEnabledExtraKey: true,
+			service.RequestBodyNormalLimitExtraKey:      int64(10),
+			service.RequestBodyHeavyLimitExtraKey:       int64(20),
+			service.RequestBodyRecoveryLimitExtraKey:    int64(30),
+		},
+	}}
+	streamStarted := false
+
+	_, admitted := h.acquireResponsesRequestBodyLane(
+		c, nil, selection, 1, 11, false, false, &streamStarted, nil, nil,
+	)
+
+	require.False(t, admitted)
+	require.Equal(t, http.StatusTooManyRequests, recorder.Code)
+	require.Equal(t, "rate_limit_error", gjson.GetBytes(recorder.Body.Bytes(), "error.type").String())
+	require.Equal(t, largeRequestQueueTimeoutCode, gjson.GetBytes(recorder.Body.Bytes(), "error.code").String())
+}
+
+func TestRequestBodyAdmissionUnavailableUsesAPIErrorTypeAndStableCode(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", http.NoBody)
+	cache := &requestBodyLaneTestCache{
+		concurrencyCacheMock: &concurrencyCacheMock{},
+		acquireErr:           errors.New("redis unavailable"),
+	}
+	h := &OpenAIGatewayHandler{
+		concurrencyHelper: NewConcurrencyHelper(service.NewConcurrencyService(cache), SSEPingFormatNone, 0),
+	}
+	selection := &service.AccountSelectionResult{Account: &service.Account{
+		ID:          9,
+		Platform:    service.PlatformOpenAI,
+		Concurrency: 5,
+		Extra: map[string]any{
+			service.RequestBodyAdmissionEnabledExtraKey: true,
+			service.RequestBodyNormalLimitExtraKey:      int64(10),
+			service.RequestBodyHeavyLimitExtraKey:       int64(20),
+			service.RequestBodyRecoveryLimitExtraKey:    int64(30),
+		},
+	}}
+	streamStarted := false
+
+	_, admitted := h.acquireResponsesRequestBodyLane(
+		c, nil, selection, 1, 11, false, false, &streamStarted, nil, nil,
+	)
+
+	require.False(t, admitted)
+	require.Equal(t, http.StatusServiceUnavailable, recorder.Code)
+	require.Equal(t, "api_error", gjson.GetBytes(recorder.Body.Bytes(), "error.type").String())
+	require.Equal(t, requestBodyAdmissionUnavailableCode, gjson.GetBytes(recorder.Body.Bytes(), "error.code").String())
 }

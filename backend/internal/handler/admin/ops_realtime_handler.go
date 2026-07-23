@@ -121,11 +121,12 @@ func (h *OpsHandler) GetUserConcurrencyTrend(c *gin.Context) {
 	}
 	if !h.opsService.IsRealtimeMonitoringEnabled(c.Request.Context()) {
 		response.Success(c, gin.H{
-			"enabled": false,
-			"bucket":  "minute",
-			"current": service.ConcurrencySnapshot{},
-			"points":  []service.UserConcurrencyTrendPoint{},
-			"users":   map[int64]service.UserConcurrencyTrendUser{},
+			"enabled":       false,
+			"bucket":        "minute",
+			"current":       service.ConcurrencySnapshot{},
+			"current_lanes": service.ConcurrencyLaneSnapshots{},
+			"points":        []service.UserConcurrencyTrendPoint{},
+			"users":         map[int64]service.UserConcurrencyTrendUser{},
 		})
 		return
 	}
@@ -139,14 +140,15 @@ func (h *OpsHandler) GetUserConcurrencyTrend(c *gin.Context) {
 		return
 	}
 	response.Success(c, gin.H{
-		"enabled":    true,
-		"start_time": trend.StartTime,
-		"end_time":   trend.EndTime,
-		"bucket":     trend.Bucket,
-		"current":    trend.Current,
-		"points":     trend.Points,
-		"users":      trend.Users,
-		"timestamp":  time.Now().UTC(),
+		"enabled":       true,
+		"start_time":    trend.StartTime,
+		"end_time":      trend.EndTime,
+		"bucket":        trend.Bucket,
+		"current":       trend.Current,
+		"current_lanes": trend.CurrentLanes,
+		"points":        trend.Points,
+		"users":         trend.Users,
+		"timestamp":     time.Now().UTC(),
 	})
 }
 

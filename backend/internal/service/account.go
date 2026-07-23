@@ -2617,38 +2617,121 @@ func (a *Account) GetBaseRPM() int {
 	return 0
 }
 
-// RequestBodyLimitExtraKey stores the per-account maximum accepted request body size in bytes.
-// A missing, zero, or negative value means unlimited.
-const RequestBodyLimitExtraKey = "request_body_limit_bytes"
+const (
+	RequestBodyAdmissionEnabledExtraKey = "request_body_admission_enabled"
+	RequestBodyNormalLimitExtraKey      = "request_body_normal_limit_bytes"
+	RequestBodyHeavyLimitExtraKey       = "request_body_heavy_limit_bytes"
+	RequestBodyRecoveryLimitExtraKey    = "request_body_recovery_limit_bytes"
 
-// CompactRequestBodyLimitBypassExtraKey opts an OpenAI account into allowing
-// remote compact requests to exceed its normal request-body limit. It is off
-// by default because the upstream must be able to accept the full transcript.
-const CompactRequestBodyLimitBypassExtraKey = "allow_compact_request_body_limit_bypass"
+	LegacyRequestBodyLimitExtraKey        = "request_body_limit_bytes"
+	LegacyCompactBodyLimitBypassExtraKey  = "allow_compact_request_body_limit_bypass"
+	DefaultRequestBodyNormalLimitBytes    = int64(3 * 1024 * 1024)
+	DefaultRequestBodyHeavyLimitBytes     = int64(20 * 1024 * 1024)
+	DefaultRequestBodyRecoveryLimitBytes  = int64(64 * 1024 * 1024)
+	MaxRequestBodyAdmissionLimitBytes     = int64(64 * 1024 * 1024)
+	RequestBodyHeavyConcurrencyPercentage = 20
+)
 
-// GetRequestBodyLimitBytes returns the account-level request body limit in bytes.
-// It accepts JSON numbers or numeric strings from Account.Extra.
-func (a *Account) GetRequestBodyLimitBytes() int64 {
-	if a == nil || a.Extra == nil {
-		return 0
+type RequestBodyLane string
+
+const (
+	RequestBodyLaneDisabled RequestBodyLane = "disabled"
+	RequestBodyLaneNormal   RequestBodyLane = "normal"
+	RequestBodyLaneHeavy    RequestBodyLane = "heavy"
+	RequestBodyLaneRecovery RequestBodyLane = "recovery"
+	RequestBodyLaneRejected RequestBodyLane = "rejected"
+)
+
+type RequestBodyAdmissionPolicy struct {
+	Enabled            bool
+	NormalLimitBytes   int64
+	HeavyLimitBytes    int64
+	RecoveryLimitBytes int64
+}
+
+// GetRequestBodyAdmissionPolicy returns the OpenAI account's tiered body policy.
+// Invalid persisted thresholds fall back to the safe defaults; admin writes are
+// validated separately so this fallback only protects legacy or manual data.
+func (a *Account) GetRequestBodyAdmissionPolicy() RequestBodyAdmissionPolicy {
+	policy := RequestBodyAdmissionPolicy{
+		NormalLimitBytes:   DefaultRequestBodyNormalLimitBytes,
+		HeavyLimitBytes:    DefaultRequestBodyHeavyLimitBytes,
+		RecoveryLimitBytes: DefaultRequestBodyRecoveryLimitBytes,
 	}
-	if v, ok := a.Extra[RequestBodyLimitExtraKey]; ok {
-		limit := int64(parseExtraFloat64(v))
-		if limit > 0 {
-			return limit
-		}
+	if a == nil || !a.IsOpenAI() || a.Extra == nil {
+		return policy
+	}
+	policy.Enabled, _ = a.Extra[RequestBodyAdmissionEnabledExtraKey].(bool)
+	if limit := positiveExtraInt64(a.Extra[RequestBodyNormalLimitExtraKey]); limit > 0 {
+		policy.NormalLimitBytes = limit
+	}
+	if limit := positiveExtraInt64(a.Extra[RequestBodyHeavyLimitExtraKey]); limit > policy.NormalLimitBytes {
+		policy.HeavyLimitBytes = limit
+	}
+	if limit := positiveExtraInt64(a.Extra[RequestBodyRecoveryLimitExtraKey]); limit > policy.HeavyLimitBytes {
+		policy.RecoveryLimitBytes = limit
+	}
+	if policy.HeavyLimitBytes <= policy.NormalLimitBytes ||
+		policy.RecoveryLimitBytes <= policy.HeavyLimitBytes ||
+		policy.RecoveryLimitBytes > MaxRequestBodyAdmissionLimitBytes {
+		policy.NormalLimitBytes = DefaultRequestBodyNormalLimitBytes
+		policy.HeavyLimitBytes = DefaultRequestBodyHeavyLimitBytes
+		policy.RecoveryLimitBytes = DefaultRequestBodyRecoveryLimitBytes
+	}
+	return policy
+}
+
+func positiveExtraInt64(v any) int64 {
+	value := int64(parseExtraFloat64(v))
+	if value > 0 {
+		return value
 	}
 	return 0
 }
 
-// AllowsCompactRequestBodyLimitBypass reports whether this OpenAI account has
-// explicitly opted into accepting an oversized remote compact request.
-func (a *Account) AllowsCompactRequestBodyLimitBypass() bool {
-	if a == nil || !a.IsOpenAI() || a.Extra == nil {
-		return false
+// Classify sends compact requests directly to the bounded recovery lane. An
+// ordinary request above the heavy threshold also uses recovery, which keeps an
+// oversized conversation recoverable without relying on a client-specific path.
+func (p RequestBodyAdmissionPolicy) Classify(bodyBytes int64, compactRequest bool) RequestBodyLane {
+	if !p.Enabled {
+		return RequestBodyLaneDisabled
 	}
-	allowed, _ := a.Extra[CompactRequestBodyLimitBypassExtraKey].(bool)
-	return allowed
+	if bodyBytes <= 0 {
+		return RequestBodyLaneNormal
+	}
+	if bodyBytes > p.RecoveryLimitBytes {
+		return RequestBodyLaneRejected
+	}
+	if compactRequest {
+		return RequestBodyLaneRecovery
+	}
+	if bodyBytes <= p.NormalLimitBytes {
+		return RequestBodyLaneNormal
+	}
+	if bodyBytes <= p.HeavyLimitBytes {
+		return RequestBodyLaneHeavy
+	}
+	return RequestBodyLaneRecovery
+}
+
+func RequestBodyHeavyConcurrencyLimit(accountConcurrency int) int {
+	if accountConcurrency <= 0 {
+		return 1
+	}
+	limit := accountConcurrency * RequestBodyHeavyConcurrencyPercentage / 100
+	if limit < 1 {
+		return 1
+	}
+	return limit
+}
+
+// RequestBodyLaneWaitLimit bounds materialized request bodies waiting in one
+// account's heavy lane or in the global recovery lane.
+func RequestBodyLaneWaitLimit(maxPermits int) int {
+	if maxPermits < 1 {
+		return 1
+	}
+	return maxPermits
 }
 
 // GetRPMStrategy 获取 RPM 策略

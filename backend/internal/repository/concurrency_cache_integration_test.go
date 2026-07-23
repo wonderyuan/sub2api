@@ -50,6 +50,102 @@ func (s *ConcurrencyCacheSuite) apiKeyConcurrencyCache() apiKeyConcurrencyCacheF
 	return cache
 }
 
+func (s *ConcurrencyCacheSuite) requestBodyAdmissionCache() service.RequestBodyAdmissionCache {
+	cache, ok := s.cache.(service.RequestBodyAdmissionCache)
+	require.True(s.T(), ok)
+	return cache
+}
+
+func (s *ConcurrencyCacheSuite) TestRequestBodyLane_EnforcesScopeAndPerUserLimits() {
+	cache := s.requestBodyAdmissionCache()
+	ctx := context.Background()
+
+	acquired, err := cache.AcquireRequestBodyLane(ctx, service.RequestBodyLaneHeavy, 42, 1001, 2, 1, "req-1")
+	require.NoError(s.T(), err)
+	require.True(s.T(), acquired)
+
+	acquired, err = cache.AcquireRequestBodyLane(ctx, service.RequestBodyLaneHeavy, 42, 1001, 2, 1, "req-2")
+	require.NoError(s.T(), err)
+	require.False(s.T(), acquired, "one user may only hold one active heavy request")
+
+	acquired, err = cache.AcquireRequestBodyLane(ctx, service.RequestBodyLaneHeavy, 42, 1002, 2, 1, "req-3")
+	require.NoError(s.T(), err)
+	require.True(s.T(), acquired)
+
+	acquired, err = cache.AcquireRequestBodyLane(ctx, service.RequestBodyLaneHeavy, 42, 1003, 2, 1, "req-4")
+	require.NoError(s.T(), err)
+	require.False(s.T(), acquired, "the account heavy lane is limited to two permits")
+
+	require.NoError(s.T(), cache.ReleaseRequestBodyLane(ctx, service.RequestBodyLaneHeavy, 42, 1001, 1, "req-1"))
+	acquired, err = cache.AcquireRequestBodyLane(ctx, service.RequestBodyLaneHeavy, 42, 1003, 2, 1, "req-4")
+	require.NoError(s.T(), err)
+	require.True(s.T(), acquired)
+}
+
+func (s *ConcurrencyCacheSuite) TestRequestBodyLane_PerUserActiveLimitSpansLanes() {
+	cache := s.requestBodyAdmissionCache()
+	ctx := context.Background()
+
+	acquired, err := cache.AcquireRequestBodyLane(ctx, service.RequestBodyLaneHeavy, 42, 1001, 2, 1, "req-heavy")
+	require.NoError(s.T(), err)
+	require.True(s.T(), acquired)
+
+	acquired, err = cache.AcquireRequestBodyLane(ctx, service.RequestBodyLaneRecovery, 0, 1001, 1, 1, "req-recovery")
+	require.NoError(s.T(), err)
+	require.False(s.T(), acquired, "one user may only hold one active large request across all lanes")
+
+	require.NoError(s.T(), cache.ReleaseRequestBodyLane(ctx, service.RequestBodyLaneHeavy, 42, 1001, 1, "req-heavy"))
+	acquired, err = cache.AcquireRequestBodyLane(ctx, service.RequestBodyLaneRecovery, 0, 1001, 1, 1, "req-recovery")
+	require.NoError(s.T(), err)
+	require.True(s.T(), acquired)
+}
+
+func (s *ConcurrencyCacheSuite) TestRequestBodyLaneWaitCount_IsBoundedPerUser() {
+	cache := s.requestBodyAdmissionCache()
+	allowed, err := cache.IncrementRequestBodyLaneWaitCount(s.ctx, 1001, 1, "waiter-1")
+	require.NoError(s.T(), err)
+	require.True(s.T(), allowed)
+
+	allowed, err = cache.IncrementRequestBodyLaneWaitCount(s.ctx, 1001, 1, "waiter-1")
+	require.NoError(s.T(), err)
+	require.True(s.T(), allowed, "re-registering the same waiter is idempotent")
+
+	allowed, err = cache.IncrementRequestBodyLaneWaitCount(s.ctx, 1001, 1, "waiter-2")
+	require.NoError(s.T(), err)
+	require.False(s.T(), allowed, "one user may only queue one large request across all lanes")
+
+	require.NoError(s.T(), cache.DecrementRequestBodyLaneWaitCount(s.ctx, 1001, "waiter-2"))
+	allowed, err = cache.IncrementRequestBodyLaneWaitCount(s.ctx, 1001, 1, "waiter-2")
+	require.NoError(s.T(), err)
+	require.False(s.T(), allowed, "a different waiter cannot clear the current owner")
+
+	require.NoError(s.T(), cache.DecrementRequestBodyLaneWaitCount(s.ctx, 1001, "waiter-1"))
+	allowed, err = cache.IncrementRequestBodyLaneWaitCount(s.ctx, 1001, 1, "waiter-2")
+	require.NoError(s.T(), err)
+	require.True(s.T(), allowed)
+}
+
+func (s *ConcurrencyCacheSuite) TestRequestBodyLaneAcquireDoesNotClearAnotherWaiter() {
+	cache := s.requestBodyAdmissionCache()
+	const userID int64 = 1004
+
+	acquired, err := cache.AcquireRequestBodyLane(s.ctx, service.RequestBodyLaneHeavy, 44, userID, 1, 1, "active-a")
+	require.NoError(s.T(), err)
+	require.True(s.T(), acquired)
+	allowed, err := cache.IncrementRequestBodyLaneWaitCount(s.ctx, userID, 1, "waiter-b")
+	require.NoError(s.T(), err)
+	require.True(s.T(), allowed)
+
+	require.NoError(s.T(), cache.ReleaseRequestBodyLane(s.ctx, service.RequestBodyLaneHeavy, 44, userID, 1, "active-a"))
+	acquired, err = cache.AcquireRequestBodyLane(s.ctx, service.RequestBodyLaneHeavy, 44, userID, 1, 1, "racer-c")
+	require.NoError(s.T(), err)
+	require.True(s.T(), acquired)
+
+	allowed, err = cache.IncrementRequestBodyLaneWaitCount(s.ctx, userID, 1, "waiter-d")
+	require.NoError(s.T(), err)
+	require.False(s.T(), allowed, "a racing acquire must preserve the existing waiter's ownership")
+}
+
 func (s *ConcurrencyCacheSuite) TestOpenAIWSIngressAPIKeySlot_HardLimitRefreshAndRelease() {
 	apiKeyID := int64(9011)
 	firstLeaseID := "ingress-first"

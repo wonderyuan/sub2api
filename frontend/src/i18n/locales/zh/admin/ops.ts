@@ -783,8 +783,9 @@ export default {
       },
       concurrencyTrend: {
         title: '最近一小时用户并发峰值',
-        subtitle: '每分钟峰值，需求并发包含正在执行和排队中的请求',
+        subtitle: '按普通、重请求和恢复通道分别统计每分钟峰值，用户曲线为占用与排队之和',
         systemDemand: '系统总需求',
+        systemActive: '系统占用',
         systemWaiting: '系统排队',
         currentDemand: '当前需求',
         currentActive: '占用',
@@ -793,7 +794,13 @@ export default {
         removeUser: '移除用户曲线',
         axis: '并发请求数',
         unlimited: '不限',
-        userTooltip: '{user}：需求 {demand}，占用 {active}，排队 {waiting}，上限 {limit}',
+        userTooltip: '{user}：需求 {demand}，占用 {active}，排队 {waiting}',
+        lanes: {
+          normal: '普通通道',
+          heavy: '重请求通道',
+          recovery: '恢复通道'
+        },
+        laneEmpty: '该通道最近一小时暂无并发活动',
         empty: '最近一小时暂无并发活动',
         loadFailed: '加载用户并发趋势失败'
       },

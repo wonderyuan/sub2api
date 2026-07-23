@@ -220,6 +220,20 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	if !h.ensureResponsesDependencies(c, reqLog) {
 		return
 	}
+	setOpsRequestContext(c, "", false)
+
+	// Reserve the user's request slot before reading or decompressing the body.
+	// Requests waiting for user capacity then remain under transport backpressure
+	// instead of retaining a fully materialized large body in Go memory.
+	userReleaseFunc, resolveNormalConcurrency, reserveNonNormalConcurrency, acquired := h.acquireResponsesUserSlotForBodyAdmission(
+		c, subject.UserID, subject.Concurrency, false, &streamStarted, reqLog,
+	)
+	if !acquired {
+		return
+	}
+	if userReleaseFunc != nil {
+		defer userReleaseFunc()
+	}
 
 	// Read request body
 	body, err := readLenientJSONRequestBodyWithPrealloc(c.Request, h.cfg)
@@ -238,11 +252,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	}
 	requestBodyBytes := int64(len(body))
 
-	setOpsRequestContext(c, "", false)
 	sessionHashBody := body
 	// Classify before legacy body-signal normalization can rewrite /responses
-	// to /responses/compact. The native compact path and an explicit compaction
-	// body signal are eligible to bypass an opted-in account's local limit.
+	// to /responses/compact. Both forms enter the bounded recovery lane.
 	compactRequest := isOpenAICompactRequest(c, body)
 	body, ok = h.normalizeOpenAIResponsesCompactRequest(c, reqLog, body)
 	if !ok {
@@ -357,15 +369,6 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	service.SetOpsLatencyMs(c, service.OpsAuthLatencyMsKey, time.Since(requestStart).Milliseconds())
 	routingStart := time.Now()
 
-	userReleaseFunc, acquired := h.acquireResponsesUserSlot(c, subject.UserID, subject.Concurrency, reqStream, &streamStarted, reqLog)
-	if !acquired {
-		return
-	}
-	// 确保请求取消时也会释放槽位，避免长连接被动中断造成泄漏
-	if userReleaseFunc != nil {
-		defer userReleaseFunc()
-	}
-
 	// 2. Re-check billing eligibility after wait
 	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
 		reqLog.Info("openai.billing_eligibility_check_failed", zap.Error(err))
@@ -475,25 +478,21 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		sessionHash = ensureOpenAIPoolModeSessionHash(sessionHash, account)
 		reqLog.Debug("openai.account_selected", zap.Int64("account_id", account.ID), zap.String("account_name", account.Name))
 		setOpsSelectedAccount(c, account.ID, account.Platform)
-		compactBodyLimitBypass := shouldBypassAccountRequestBodyLimitForCompact(account, requestBodyBytes, compactRequest)
-		if !compactBodyLimitBypass && rejectIfAccountRequestBodyTooLarge(reqLog, account, requestBodyBytes, func(status int, code string, message string) {
-			releaseAcquiredAccountSelection(selection)
-			h.handleStreamingAwareError(c, status, code, message, streamStarted)
-		}) {
+		bodyLaneRelease, admitted := h.acquireResponsesRequestBodyLane(
+			c, reqLog, selection, subject.UserID, requestBodyBytes, compactRequest, reqStream, &streamStarted, resolveNormalConcurrency, reserveNonNormalConcurrency,
+		)
+		if !admitted {
 			return
-		}
-		if compactBodyLimitBypass {
-			reqLog.Info("openai.account_request_body_limit_bypassed_for_compact",
-				zap.Int64("account_id", account.ID),
-				zap.Int64("request_body_bytes", requestBodyBytes),
-				zap.Int64("account_request_body_limit_bytes", account.GetRequestBodyLimitBytes()),
-			)
 		}
 
 		accountReleaseFunc, acquired := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, reqStream, &streamStarted, reqLog)
 		if !acquired {
+			if bodyLaneRelease != nil {
+				bodyLaneRelease()
+			}
 			return
 		}
+		accountReleaseFunc = combineReleaseFuncs(accountReleaseFunc, bodyLaneRelease)
 
 		// Forward request
 		service.SetOpsLatencyMs(c, service.OpsRoutingLatencyMsKey, time.Since(routingStart).Milliseconds())
@@ -700,17 +699,6 @@ func isOpenAICompactRequest(c *gin.Context, body []byte) bool {
 		return true
 	}
 	return isBareOpenAIResponsesPath(c) && isOpenAICompactionBodySignal(body)
-}
-
-// shouldBypassAccountRequestBodyLimitForCompact keeps the account-level limit
-// as the default. Only an explicitly opted-in OpenAI account may receive an
-// oversized compact request; the global gateway limit still applies.
-func shouldBypassAccountRequestBodyLimitForCompact(account *service.Account, bodyBytes int64, compactRequest bool) bool {
-	if !compactRequest || account == nil || !account.AllowsCompactRequestBodyLimitBypass() {
-		return false
-	}
-	limit := account.GetRequestBodyLimitBytes()
-	return limit > 0 && bodyBytes > limit
 }
 
 // isBareOpenAIResponsesPath 仅匹配裸 /responses 端点（无 /compact 等子路径），
@@ -1051,12 +1039,6 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		reqLog.Debug("openai_messages.account_selected", zap.Int64("account_id", account.ID), zap.String("account_name", account.Name))
 		_ = scheduleDecision
 		setOpsSelectedAccount(c, account.ID, account.Platform)
-		if rejectIfAccountRequestBodyTooLarge(reqLog, account, requestBodyBytes, func(status int, code string, message string) {
-			releaseAcquiredAccountSelection(selection)
-			h.anthropicStreamingAwareError(c, status, code, message, streamStarted)
-		}) {
-			return
-		}
 
 		accountReleaseFunc, acquired := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, reqStream, &streamStarted, reqLog)
 		if !acquired {
@@ -1327,6 +1309,26 @@ func (h *OpenAIGatewayHandler) validateFunctionCallOutputRequest(c *gin.Context,
 	)
 	h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "function_call_output requires item_reference ids matching each call_id on HTTP requests; continuation via previous_response_id is only supported on Responses WebSocket v2")
 	return false
+}
+
+func (h *OpenAIGatewayHandler) acquireResponsesUserSlotForBodyAdmission(
+	c *gin.Context,
+	userID int64,
+	userConcurrency int,
+	reqStream bool,
+	streamStarted *bool,
+	reqLog *zap.Logger,
+) (func(), func(), func(), bool) {
+	ctx := c.Request.Context()
+	userReleaseFunc, resolveNormal, reserveNonNormal, err := h.concurrencyHelper.AcquireUserSlotWithWaitForRequestBodyAdmission(
+		c, userID, userConcurrency, reqStream, streamStarted,
+	)
+	if err != nil {
+		reqLog.Warn("openai.user_slot_acquire_failed", zap.Error(err))
+		h.handleConcurrencyError(c, err, "user", *streamStarted)
+		return nil, nil, nil, false
+	}
+	return wrapReleaseOnDone(ctx, userReleaseFunc), resolveNormal, reserveNonNormal, true
 }
 
 func (h *OpenAIGatewayHandler) acquireResponsesUserSlot(
@@ -2354,14 +2356,14 @@ func (h *OpenAIGatewayHandler) handleStreamingAwareErrorWithCode(
 		if countTowardsSLA {
 			service.MarkOpsStreamFailure(c, errType, code, message, status)
 		} else {
-			service.MarkOpsStreamError(c, errType, message, status)
+			service.MarkOpsStreamErrorWithCode(c, errType, code, message, status)
 		}
 		// /v1/responses 的严格 SDK（Codex CLI）要求终止事件必须属于
 		// response.completed/failed/incomplete/cancelled 集合。
 		// 通用 `event: error` 帧不被识别为终止事件，会导致
 		// "stream closed before response.completed"。
 		if inboundIsResponses(c) {
-			if writeResponsesFailedSSE(c, errType, message) {
+			if writeResponsesFailedSSE(c, errType, code, message) {
 				return
 			}
 		}
@@ -2524,7 +2526,7 @@ func (h *OpenAIGatewayHandler) errorResponse(c *gin.Context, status int, errType
 	// 提交的 SSE 流交错，必须降级为 response.failed 终止事件（#3887）。
 	if service.StopOpenAICompactSSEKeepaliveCommitted(c) {
 		service.MarkOpsStreamError(c, errType, message, status)
-		if writeResponsesFailedSSE(c, errType, message) {
+		if writeResponsesFailedSSE(c, errType, "", message) {
 			return
 		}
 	}
@@ -2816,7 +2818,7 @@ func (h *OpenAIGatewayHandler) rejectIfCyberSessionBlocked(c *gin.Context, apiKe
 	// 写 JSON（#3887）。
 	if service.StopOpenAICompactSSEKeepaliveCommitted(c) {
 		service.MarkOpsStreamError(c, "permission_error", cyberSessionBlockedClientMsg, http.StatusForbidden)
-		if writeResponsesFailedSSE(c, "permission_error", cyberSessionBlockedClientMsg) {
+		if writeResponsesFailedSSE(c, "permission_error", "", cyberSessionBlockedClientMsg) {
 			h.enqueueCyberSessionBlockedOpsEntry(c, apiKey, model, key)
 			return true
 		}

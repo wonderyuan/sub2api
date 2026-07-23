@@ -1445,34 +1445,78 @@
           <p class="input-hint">{{ t('admin.accounts.billingRateMultiplierHint') }}</p>
         </div>
       </div>
-      <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
-        <label class="input-label">{{ t('admin.accounts.requestBodyLimit') }}</label>
-        <input
-          v-model.number="requestBodyLimitMB"
-          type="number"
-          min="0"
-          step="0.1"
-          class="input"
-          :placeholder="t('admin.accounts.requestBodyLimitPlaceholder')"
-        />
-        <p class="input-hint">{{ t('admin.accounts.requestBodyLimitHint') }}</p>
-        <label
-          v-if="account.platform === 'openai' && requestBodyLimitMB != null && requestBodyLimitMB > 0"
-          class="mt-3 flex items-start gap-2 text-sm text-gray-700 dark:text-gray-300"
-        >
-          <input
-            v-model="allowCompactRequestBodyLimitBypass"
-            type="checkbox"
-            class="mt-0.5"
-            data-testid="allow-compact-request-body-limit-bypass"
-          />
-          <span>
-            {{ t('admin.accounts.allowCompactRequestBodyLimitBypass') }}
-            <span class="mt-1 block text-xs text-gray-500 dark:text-gray-400">
-              {{ t('admin.accounts.allowCompactRequestBodyLimitBypassHint') }}
-            </span>
-          </span>
-        </label>
+      <div
+        v-if="account.platform === 'openai'"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div class="flex items-center justify-between gap-4">
+          <div>
+            <label class="input-label mb-0">{{ t('admin.accounts.requestBodyAdmission') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.requestBodyAdmissionHint') }}
+            </p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            :aria-checked="requestBodyAdmissionEnabled"
+            data-testid="request-body-admission-toggle"
+            @click="requestBodyAdmissionEnabled = !requestBodyAdmissionEnabled"
+            :class="[
+              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+              requestBodyAdmissionEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+            ]"
+          >
+            <span
+              :class="[
+                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                requestBodyAdmissionEnabled ? 'translate-x-5' : 'translate-x-0'
+              ]"
+            />
+          </button>
+        </div>
+
+        <div v-if="requestBodyAdmissionEnabled" class="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
+          <div>
+            <label class="input-label">{{ t('admin.accounts.requestBodyNormalLimit') }}</label>
+            <input
+              v-model.number="requestBodyNormalLimitMB"
+              data-testid="request-body-normal-limit"
+              type="number"
+              min="0.1"
+              :max="requestBodyAdmissionMaxLimitMB"
+              step="0.1"
+              class="input"
+            />
+          </div>
+          <div>
+            <label class="input-label">{{ t('admin.accounts.requestBodyHeavyLimit') }}</label>
+            <input
+              v-model.number="requestBodyHeavyLimitMB"
+              data-testid="request-body-heavy-limit"
+              type="number"
+              min="0.1"
+              :max="requestBodyAdmissionMaxLimitMB"
+              step="0.1"
+              class="input"
+            />
+          </div>
+          <div>
+            <label class="input-label">{{ t('admin.accounts.requestBodyRecoveryLimit') }}</label>
+            <input
+              v-model.number="requestBodyRecoveryLimitMB"
+              data-testid="request-body-recovery-limit"
+              type="number"
+              min="0.1"
+              :max="requestBodyAdmissionMaxLimitMB"
+              step="0.1"
+              class="input"
+            />
+          </div>
+        </div>
+        <p v-if="requestBodyAdmissionEnabled" class="input-hint mt-2">
+          {{ t('admin.accounts.requestBodyAdmissionCapacityHint') }}
+        </p>
       </div>
 
       <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
@@ -2843,8 +2887,11 @@ const baseRpm = ref<number | null>(null)
 const rpmStrategy = ref<'tiered' | 'sticky_exempt'>('tiered')
 const rpmStickyBuffer = ref<number | null>(null)
 const userMsgQueueMode = ref('')
-const requestBodyLimitMB = ref<number | null>(null)
-const allowCompactRequestBodyLimitBypass = ref(false)
+const requestBodyAdmissionEnabled = ref(false)
+const requestBodyAdmissionMaxLimitMB = 64
+const requestBodyNormalLimitMB = ref(3)
+const requestBodyHeavyLimitMB = ref(20)
+const requestBodyRecoveryLimitMB = ref(64)
 const umqModeOptions = computed(() => [
   { value: '', label: t('admin.accounts.quotaControl.rpmLimit.umqModeOff') },
   { value: 'throttle', label: t('admin.accounts.quotaControl.rpmLimit.umqModeThrottle') },
@@ -3292,12 +3339,17 @@ const syncFormFromAccount = (newAccount: Account | null) => {
 	autoPause7dThreshold.value = typeof extra?.auto_pause_7d_threshold === 'number' ? extra.auto_pause_7d_threshold * 100 : null
 	autoPause5hDisabled.value = extra?.auto_pause_5h_disabled === true
 	autoPause7dDisabled.value = extra?.auto_pause_7d_disabled === true
-  const requestBodyLimitBytes = Number(extra?.request_body_limit_bytes || 0)
-  requestBodyLimitMB.value = Number.isFinite(requestBodyLimitBytes) && requestBodyLimitBytes > 0
-    ? Math.round((requestBodyLimitBytes / 1024 / 1024) * 10) / 10
-    : null
-  allowCompactRequestBodyLimitBypass.value = newAccount.platform === 'openai' &&
-    extra?.allow_compact_request_body_limit_bypass === true
+  requestBodyAdmissionEnabled.value = newAccount.platform === 'openai' &&
+    extra?.request_body_admission_enabled === true
+  const bytesToMB = (raw: unknown, fallback: number) => {
+    const bytes = Number(raw)
+    return Number.isFinite(bytes) && bytes > 0
+      ? Math.round((bytes / 1024 / 1024) * 10) / 10
+      : fallback
+  }
+  requestBodyNormalLimitMB.value = bytesToMB(extra?.request_body_normal_limit_bytes, 3)
+  requestBodyHeavyLimitMB.value = bytesToMB(extra?.request_body_heavy_limit_bytes, 20)
+  requestBodyRecoveryLimitMB.value = bytesToMB(extra?.request_body_recovery_limit_bytes, 64)
 	upstreamBillingAutoProbeEnabled.value = extra?.upstream_billing_probe_enabled === true
 
   // Load OpenAI passthrough toggle (OpenAI OAuth/SetupToken/API Key)
@@ -4061,6 +4113,21 @@ const handleSubmit = async () => {
     return
   }
 
+  if (props.account.platform === 'openai' && requestBodyAdmissionEnabled.value) {
+    const normal = Number(requestBodyNormalLimitMB.value)
+    const heavy = Number(requestBodyHeavyLimitMB.value)
+    const recovery = Number(requestBodyRecoveryLimitMB.value)
+    if (
+      ![normal, heavy, recovery].every((value) => Number.isFinite(value) && value > 0) ||
+      normal >= heavy ||
+      heavy >= recovery ||
+      recovery > requestBodyAdmissionMaxLimitMB
+    ) {
+      appStore.showError(t('admin.accounts.requestBodyAdmissionInvalid'))
+      return
+    }
+  }
+
   const updatePayload: Record<string, unknown> = { ...form }
   try {
     // 后端期望 proxy_id: 0 表示清除代理，而不是 null
@@ -4686,18 +4753,23 @@ const handleSubmit = async () => {
       const currentExtra = (updatePayload.extra as Record<string, unknown>) ||
         (props.account.extra as Record<string, unknown>) || {}
       const newExtra: Record<string, unknown> = { ...currentExtra }
-      const limitMB = Number(requestBodyLimitMB.value || 0)
-      if (Number.isFinite(limitMB) && limitMB > 0) {
-        newExtra.request_body_limit_bytes = Math.floor(limitMB * 1024 * 1024)
-      } else {
-        delete newExtra.request_body_limit_bytes
-      }
+      delete newExtra.request_body_limit_bytes
+      delete newExtra.allow_compact_request_body_limit_bypass
       if (props.account.platform === 'openai') {
-        if (allowCompactRequestBodyLimitBypass.value && Number.isFinite(limitMB) && limitMB > 0) {
-          newExtra.allow_compact_request_body_limit_bypass = true
-        } else {
-          delete newExtra.allow_compact_request_body_limit_bypass
+        const mbToBytes = (raw: unknown, fallbackMB: number) => {
+          const value = Number(raw)
+          const safeMB = Number.isFinite(value) && value > 0 ? value : fallbackMB
+          return Math.floor(safeMB * 1024 * 1024)
         }
+        newExtra.request_body_admission_enabled = requestBodyAdmissionEnabled.value
+        newExtra.request_body_normal_limit_bytes = mbToBytes(requestBodyNormalLimitMB.value, 3)
+        newExtra.request_body_heavy_limit_bytes = mbToBytes(requestBodyHeavyLimitMB.value, 20)
+        newExtra.request_body_recovery_limit_bytes = mbToBytes(requestBodyRecoveryLimitMB.value, 64)
+      } else {
+        delete newExtra.request_body_admission_enabled
+        delete newExtra.request_body_normal_limit_bytes
+        delete newExtra.request_body_heavy_limit_bytes
+        delete newExtra.request_body_recovery_limit_bytes
       }
       updatePayload.extra = newExtra
     }

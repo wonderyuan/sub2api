@@ -373,10 +373,30 @@ export interface ConcurrencyPeak {
   peak_demand: number
 }
 
+export interface ConcurrencyLanePeaks {
+  normal: ConcurrencyPeak
+  heavy: ConcurrencyPeak
+  recovery: ConcurrencyPeak
+}
+
+export interface ConcurrencySnapshot {
+  in_use: number
+  waiting: number
+  demand: number
+}
+
+export interface ConcurrencyLaneSnapshots {
+  normal: ConcurrencySnapshot
+  heavy: ConcurrencySnapshot
+  recovery: ConcurrencySnapshot
+}
+
 export interface UserConcurrencyTrendPoint {
   bucket_start: string
   system: ConcurrencyPeak
   users: Record<string, ConcurrencyPeak>
+  system_lanes?: ConcurrencyLanePeaks
+  user_lanes?: Record<string, ConcurrencyLanePeaks>
 }
 
 export interface UserConcurrencyTrendUser {
@@ -391,11 +411,8 @@ export interface OpsUserConcurrencyTrendResponse {
   start_time?: string
   end_time?: string
   bucket: 'minute'
-  current: {
-    in_use: number
-    waiting: number
-    demand: number
-  }
+  current: ConcurrencySnapshot
+  current_lanes?: ConcurrencyLaneSnapshots
   points: UserConcurrencyTrendPoint[]
   users: Record<string, UserConcurrencyTrendUser>
   timestamp?: string

@@ -8,36 +8,15 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	pkghttputil "github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
 
-type requestBodyLimitResponder func(status int, code string, message string)
-
-// rejectIfAccountRequestBodyTooLarge treats an account body-size limit as a terminal
-// client error for the selected account rather than a retryable upstream failure.
-func rejectIfAccountRequestBodyTooLarge(
-	reqLog *zap.Logger,
-	account *service.Account,
-	bodyBytes int64,
-	respond requestBodyLimitResponder,
-) bool {
-	if account == nil || bodyBytes <= 0 {
-		return false
-	}
-	limit := account.GetRequestBodyLimitBytes()
-	if limit <= 0 || bodyBytes <= limit {
-		return false
-	}
-	if reqLog != nil {
-		reqLog.Warn("gateway.request_body_limit_exceeded",
-			zap.Int64("account_id", account.ID),
-			zap.Int64("request_body_bytes", bodyBytes),
-			zap.Int64("request_body_limit_bytes", limit),
-		)
-	}
-	respond(http.StatusRequestEntityTooLarge, "request_body_too_large", requestBodyLimitMessage(bodyBytes, limit))
-	return true
-}
+const (
+	requestBodyRecoveryLimitExceededCode = "request_body_recovery_limit_exceeded"
+	requestBodyAdmissionUnavailableCode  = "request_body_admission_unavailable"
+	largeRequestQueueTimeoutCode         = "large_request_queue_timeout"
+)
 
 func releaseAcquiredAccountSelection(selection *service.AccountSelectionResult) {
 	if selection != nil && selection.Acquired && selection.ReleaseFunc != nil {
@@ -45,8 +24,155 @@ func releaseAcquiredAccountSelection(selection *service.AccountSelectionResult) 
 	}
 }
 
-func requestBodyLimitMessage(bodyBytes, limit int64) string {
-	return fmt.Sprintf("Request body too large: %d bytes exceeds account limit %d bytes", bodyBytes, limit)
+func combineReleaseFuncs(releases ...func()) func() {
+	return func() {
+		for _, release := range releases {
+			if release != nil {
+				release()
+			}
+		}
+	}
+}
+
+func releaseSelectionForRequestBodyLaneWait(selection *service.AccountSelectionResult) {
+	if selection == nil || selection.Account == nil || !selection.Acquired {
+		return
+	}
+	releaseAcquiredAccountSelection(selection)
+	selection.Acquired = false
+	selection.ReleaseFunc = nil
+	if selection.WaitPlan == nil {
+		selection.WaitPlan = &service.AccountWaitPlan{
+			AccountID:      selection.Account.ID,
+			MaxConcurrency: selection.Account.Concurrency,
+			Timeout:        maxConcurrencyWait,
+			MaxWaiting:     1,
+		}
+	}
+}
+
+func (h *OpenAIGatewayHandler) acquireResponsesRequestBodyLane(
+	c *gin.Context,
+	reqLog *zap.Logger,
+	selection *service.AccountSelectionResult,
+	userID int64,
+	bodyBytes int64,
+	compactRequest bool,
+	isStream bool,
+	streamStarted *bool,
+	resolveNormal func(),
+	reserveNonNormal func(),
+) (func(), bool) {
+	if selection == nil || selection.Account == nil {
+		if resolveNormal != nil {
+			resolveNormal()
+		}
+		return nil, true
+	}
+	account := selection.Account
+	if reserveNonNormal != nil {
+		reserveNonNormal()
+	}
+	policy := account.GetRequestBodyAdmissionPolicy()
+	lane := policy.Classify(bodyBytes, compactRequest)
+	if lane == service.RequestBodyLaneDisabled {
+		if resolveNormal != nil {
+			resolveNormal()
+		}
+		return nil, true
+	}
+	c.Header("X-Sub2API-Request-Body-Policy", "tiered-admission")
+	c.Header("X-Sub2API-Request-Body-Lane", string(lane))
+	if reqLog != nil {
+		fields := []zap.Field{
+			zap.Int64("account_id", account.ID),
+			zap.Int64("user_id", userID),
+			zap.Int64("request_body_bytes", bodyBytes),
+			zap.Int64("normal_limit_bytes", policy.NormalLimitBytes),
+			zap.Int64("heavy_limit_bytes", policy.HeavyLimitBytes),
+			zap.Int64("recovery_limit_bytes", policy.RecoveryLimitBytes),
+			zap.String("request_body_lane", string(lane)),
+			zap.Bool("compact_request", compactRequest),
+		}
+		if lane == service.RequestBodyLaneNormal {
+			reqLog.Debug("openai.request_body_lane_classified", fields...)
+		} else {
+			reqLog.Info("openai.request_body_lane_classified", fields...)
+		}
+	}
+
+	if lane == service.RequestBodyLaneRejected {
+		releaseAcquiredAccountSelection(selection)
+		message := fmt.Sprintf(
+			"Request body is %d bytes and exceeds the configured recovery limit of %d bytes; reduce the request or raise the recovery channel limit",
+			bodyBytes,
+			policy.RecoveryLimitBytes,
+		)
+		h.handleStreamingAwareErrorWithCode(
+			c, http.StatusRequestEntityTooLarge, "invalid_request_error", requestBodyRecoveryLimitExceededCode, message, *streamStarted, false,
+		)
+		return nil, false
+	}
+	if lane == service.RequestBodyLaneNormal {
+		if resolveNormal != nil {
+			resolveNormal()
+		}
+		return nil, true
+	}
+
+	scopeID := account.ID
+	maxPermits := service.RequestBodyHeavyConcurrencyLimit(account.Concurrency)
+	if lane == service.RequestBodyLaneRecovery {
+		scopeID = 0
+		maxPermits = 1
+	}
+	release, acquired, err := h.concurrencyHelper.TryAcquireRequestBodyLane(
+		c.Request.Context(), lane, scopeID, userID, maxPermits, 1,
+	)
+	if err != nil {
+		releaseAcquiredAccountSelection(selection)
+		h.handleStreamingAwareErrorWithCode(
+			c, http.StatusServiceUnavailable, "api_error", requestBodyAdmissionUnavailableCode, "Request body admission is temporarily unavailable", *streamStarted, false,
+		)
+		return nil, false
+	}
+	if acquired {
+		return wrapReleaseOnDone(c.Request.Context(), release), true
+	}
+
+	// The scheduler may have optimistically reserved an account slot. Large
+	// requests must release it before waiting so ordinary traffic stays isolated.
+	releaseSelectionForRequestBodyLaneWait(selection)
+	release, err = h.concurrencyHelper.AcquireRequestBodyLaneWithWait(
+		c, lane, scopeID, userID, maxPermits, service.RequestBodyLaneWaitLimit(maxPermits), 1, isStream, streamStarted,
+	)
+	if err != nil {
+		if reqLog != nil {
+			reqLog.Warn("openai.request_body_lane_wait_failed",
+				zap.Int64("account_id", account.ID),
+				zap.Int64("user_id", userID),
+				zap.String("request_body_lane", string(lane)),
+				zap.Error(err),
+			)
+		}
+		if c.Request.Context().Err() != nil {
+			return nil, false
+		}
+		var queueFullErr *WaitQueueFullError
+		var concurrencyErr *ConcurrencyError
+		if errors.As(err, &queueFullErr) || (errors.As(err, &concurrencyErr) && concurrencyErr.IsTimeout) {
+			c.Header("Retry-After", "5")
+			h.handleStreamingAwareErrorWithCode(
+				c, http.StatusTooManyRequests, "rate_limit_error", largeRequestQueueTimeoutCode, "Large request queue is full or timed out; retry later", *streamStarted, false,
+			)
+			return nil, false
+		}
+		h.handleStreamingAwareErrorWithCode(
+			c, http.StatusServiceUnavailable, "api_error", requestBodyAdmissionUnavailableCode, "Request body admission is temporarily unavailable", *streamStarted, false,
+		)
+		return nil, false
+	}
+	return wrapReleaseOnDone(c.Request.Context(), release), true
 }
 
 func extractMaxBytesError(err error) (*http.MaxBytesError, bool) {

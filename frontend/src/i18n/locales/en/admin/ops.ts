@@ -782,8 +782,9 @@ export default {
       },
       concurrencyTrend: {
         title: 'User concurrency peaks · Last hour',
-        subtitle: 'Per-minute peaks; demand includes active and queued requests',
+        subtitle: 'Per-minute peaks split by normal, heavy, and recovery lanes; user series include active and queued requests',
         systemDemand: 'Total demand',
+        systemActive: 'System active',
         systemWaiting: 'Queued',
         currentDemand: 'Current demand',
         currentActive: 'Active',
@@ -792,7 +793,13 @@ export default {
         removeUser: 'Remove user series',
         axis: 'Concurrent requests',
         unlimited: 'Unlimited',
-        userTooltip: '{user}: demand {demand}, active {active}, queued {waiting}, limit {limit}',
+        userTooltip: '{user}: demand {demand}, active {active}, queued {waiting}',
+        lanes: {
+          normal: 'Normal lane',
+          heavy: 'Heavy lane',
+          recovery: 'Recovery lane'
+        },
+        laneEmpty: 'No concurrency activity in this lane during the last hour',
         empty: 'No concurrency activity in the last hour',
         loadFailed: 'Failed to load user concurrency trend'
       },

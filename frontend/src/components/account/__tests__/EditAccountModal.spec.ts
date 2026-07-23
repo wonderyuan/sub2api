@@ -395,10 +395,15 @@ describe('EditAccountModal', () => {
     })
   })
 
-  it('opts an OpenAI account into oversized remote compaction only when it has a body limit', async () => {
+  it('loads and submits tiered request body admission while removing legacy body-limit fields', async () => {
     const account = buildAccount()
     account.extra = {
-      request_body_limit_bytes: 10 * 1024 * 1024
+      request_body_limit_bytes: 5 * 1024 * 1024,
+      allow_compact_request_body_limit_bypass: true,
+      request_body_admission_enabled: true,
+      request_body_normal_limit_bytes: 3 * 1024 * 1024,
+      request_body_heavy_limit_bytes: 20 * 1024 * 1024,
+      request_body_recovery_limit_bytes: 64 * 1024 * 1024
     }
     updateAccountMock.mockReset()
     checkMixedChannelRiskMock.mockReset()
@@ -406,14 +411,73 @@ describe('EditAccountModal', () => {
     updateAccountMock.mockResolvedValue(account)
 
     const wrapper = mountModal(account)
-    const toggle = wrapper.get<HTMLInputElement>('[data-testid="allow-compact-request-body-limit-bypass"]')
-    expect(toggle.element.checked).toBe(false)
+    const toggle = wrapper.get('[data-testid="request-body-admission-toggle"]')
+    expect(toggle.attributes('aria-checked')).toBe('true')
+    expect(wrapper.get<HTMLInputElement>('[data-testid="request-body-normal-limit"]').element.value).toBe('3')
+    expect(wrapper.get<HTMLInputElement>('[data-testid="request-body-heavy-limit"]').element.value).toBe('20')
+    expect(wrapper.get<HTMLInputElement>('[data-testid="request-body-recovery-limit"]').element.value).toBe('64')
 
-    await toggle.setValue(true)
     await wrapper.get('form#edit-account-form').trigger('submit.prevent')
 
     expect(updateAccountMock).toHaveBeenCalledTimes(1)
-    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.allow_compact_request_body_limit_bypass).toBe(true)
+    const extra = updateAccountMock.mock.calls[0]?.[1]?.extra
+    expect(extra?.request_body_admission_enabled).toBe(true)
+    expect(extra?.request_body_normal_limit_bytes).toBe(3 * 1024 * 1024)
+    expect(extra?.request_body_heavy_limit_bytes).toBe(20 * 1024 * 1024)
+    expect(extra?.request_body_recovery_limit_bytes).toBe(64 * 1024 * 1024)
+    expect(extra?.request_body_limit_bytes).toBeUndefined()
+    expect(extra?.allow_compact_request_body_limit_bypass).toBeUndefined()
+  })
+
+  it('enables tiered request body admission with the default channel limits', async () => {
+    const account = buildAccount()
+    account.extra = {}
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    const toggle = wrapper.get('[data-testid="request-body-admission-toggle"]')
+    expect(toggle.attributes('aria-checked')).toBe('false')
+
+    await toggle.trigger('click')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    const extra = updateAccountMock.mock.calls[0]?.[1]?.extra
+    expect(extra?.request_body_admission_enabled).toBe(true)
+    expect(extra?.request_body_normal_limit_bytes).toBe(3 * 1024 * 1024)
+    expect(extra?.request_body_heavy_limit_bytes).toBe(20 * 1024 * 1024)
+    expect(extra?.request_body_recovery_limit_bytes).toBe(64 * 1024 * 1024)
+  })
+
+  it('rejects unordered tiered request body limits before calling the API', async () => {
+    const account = buildAccount()
+    account.extra = { request_body_admission_enabled: true }
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+
+    const wrapper = mountModal(account)
+    await wrapper.get('[data-testid="request-body-normal-limit"]').setValue('30')
+    await wrapper.get('[data-testid="request-body-heavy-limit"]').setValue('20')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).not.toHaveBeenCalled()
+  })
+
+  it('rejects a request body limit above the runtime maximum', async () => {
+    const account = buildAccount()
+    account.extra = { request_body_admission_enabled: true }
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+
+    const wrapper = mountModal(account)
+    await wrapper.get('[data-testid="request-body-recovery-limit"]').setValue('65')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).not.toHaveBeenCalled()
   })
 
   it('loads and submits the per-account OpenAI long-context billing toggle', async () => {

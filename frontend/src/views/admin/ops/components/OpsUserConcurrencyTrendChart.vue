@@ -3,12 +3,28 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Chart as ChartJS, CategoryScale, Legend, LineElement, LinearScale, PointElement, Tooltip } from 'chart.js'
 import { Line } from 'vue-chartjs'
-import { opsAPI, type OpsUserConcurrencyTrendResponse, type UserConcurrencyTrendUser } from '@/api/admin/ops'
+import {
+  opsAPI,
+  type ConcurrencyPeak,
+  type ConcurrencySnapshot,
+  type OpsUserConcurrencyTrendResponse,
+  type UserConcurrencyTrendPoint,
+  type UserConcurrencyTrendUser
+} from '@/api/admin/ops'
 
 ChartJS.register(CategoryScale, Legend, LineElement, LinearScale, PointElement, Tooltip)
 
 interface Props {
   refreshToken?: number
+}
+
+type LaneKey = 'normal' | 'heavy' | 'recovery'
+
+interface LaneDefinition {
+  key: LaneKey
+  title: string
+  color: string
+  queueColor: string
 }
 
 const props = withDefaults(defineProps<Props>(), { refreshToken: 0 })
@@ -22,6 +38,12 @@ const pinnedUserIds = ref<string[]>([])
 
 const palette = ['#2563eb', '#059669', '#d97706', '#dc2626', '#7c3aed', '#0891b2', '#db2777', '#4f46e5', '#65a30d', '#ea580c']
 
+const lanes = computed<LaneDefinition[]>(() => [
+  { key: 'normal', title: t('admin.ops.concurrencyTrend.lanes.normal'), color: '#059669', queueColor: '#dc2626' },
+  { key: 'heavy', title: t('admin.ops.concurrencyTrend.lanes.heavy'), color: '#d97706', queueColor: '#dc2626' },
+  { key: 'recovery', title: t('admin.ops.concurrencyTrend.lanes.recovery'), color: '#7c3aed', queueColor: '#dc2626' }
+])
+
 const userOptions = computed(() => {
   const users = trend.value?.users || {}
   return Object.entries(users)
@@ -29,25 +51,52 @@ const userOptions = computed(() => {
     .sort((a, b) => a.label.localeCompare(b.label))
 })
 
-const rankedUserIds = computed(() => {
-  const peaks = new Map<string, number>()
+function pointUserLanePeak(point: UserConcurrencyTrendPoint, userId: string, lane: LaneKey): ConcurrencyPeak | undefined {
+  const lanePeak = point.user_lanes?.[userId]?.[lane]
+  if (lanePeak) return lanePeak
+  return lane === 'normal' ? point.users?.[userId] : undefined
+}
+
+function pointSystemLanePeak(point: UserConcurrencyTrendPoint, lane: LaneKey): ConcurrencyPeak | undefined {
+  const lanePeak = point.system_lanes?.[lane]
+  if (lanePeak) return lanePeak
+  return lane === 'normal' ? point.system : undefined
+}
+
+const rankedUserIdsByLane = computed<Record<LaneKey, string[]>>(() => {
+  const peaksByLane: Record<LaneKey, Map<string, number>> = {
+    normal: new Map<string, number>(),
+    heavy: new Map<string, number>(),
+    recovery: new Map<string, number>()
+  }
   for (const point of trend.value?.points || []) {
-    for (const [userId, peak] of Object.entries(point.users || {})) {
-      peaks.set(userId, Math.max(peaks.get(userId) || 0, peak.peak_demand || 0))
+    const userIds = new Set([...Object.keys(point.users || {}), ...Object.keys(point.user_lanes || {})])
+    for (const userId of userIds) {
+      for (const lane of lanes.value) {
+        const demand = pointUserLanePeak(point, userId, lane.key)?.peak_demand || 0
+        const peaks = peaksByLane[lane.key]
+        peaks.set(userId, Math.max(peaks.get(userId) || 0, demand))
+      }
     }
   }
-  return [...peaks.entries()].sort((a, b) => b[1] - a[1]).map(([userId]) => userId)
+  const ranked = (peaks: Map<string, number>) => [...peaks.entries()]
+    .filter(([, peak]) => peak > 0)
+    .sort((a, b) => b[1] - a[1])
+    .map(([userId]) => userId)
+  return {
+    normal: ranked(peaksByLane.normal),
+    heavy: ranked(peaksByLane.heavy),
+    recovery: ranked(peaksByLane.recovery)
+  }
 })
 
-const visibleUserIds = computed(() => {
-  const ids = [...rankedUserIds.value.slice(0, 5)]
+function visibleUserIds(lane: LaneKey): string[] {
+  const ids = [...rankedUserIdsByLane.value[lane].slice(0, 5)]
   for (const userId of pinnedUserIds.value) {
     if (!ids.includes(userId)) ids.push(userId)
   }
   return ids.slice(0, 10)
-})
-
-const hasData = computed(() => (trend.value?.points || []).some(point => (point.system?.peak_demand || 0) > 0))
+}
 
 function userLabel(userId: string): string {
   const user = trend.value?.users?.[userId]
@@ -59,35 +108,42 @@ function userOptionText(user: UserConcurrencyTrendUser, fallback: string): strin
   return user.user_email && user.user_email !== label ? `${label} · ${user.user_email}` : label
 }
 
-function userLimitLabel(user?: UserConcurrencyTrendUser): string | number {
-  return user && user.max_capacity > 0 ? user.max_capacity : t('admin.ops.concurrencyTrend.unlimited')
-}
-
 function formatMinute(value: string): string {
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? value : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
-const chartData = computed(() => {
+function currentLane(lane: LaneKey): ConcurrencySnapshot {
+  const current = trend.value?.current_lanes?.[lane]
+  if (current) return current
+  if (lane === 'normal' && trend.value?.current) return trend.value.current
+  return { in_use: 0, waiting: 0, demand: 0 }
+}
+
+function hasLaneData(lane: LaneKey): boolean {
+  return (trend.value?.points || []).some(point => (pointSystemLanePeak(point, lane)?.peak_demand || 0) > 0)
+}
+
+function laneChartData(lane: LaneDefinition) {
   const points = trend.value?.points || []
   const datasets: any[] = [
     {
-      label: t('admin.ops.concurrencyTrend.systemDemand'),
-      data: points.map(point => point.system?.peak_demand || 0),
-      borderColor: '#111827',
-      backgroundColor: '#111827',
+      label: t('admin.ops.concurrencyTrend.systemActive'),
+      data: points.map(point => pointSystemLanePeak(point, lane.key)?.peak_in_use || 0),
+      borderColor: lane.color,
+      backgroundColor: lane.color,
       borderWidth: 2.5,
       pointRadius: 1.5,
       pointHitRadius: 10,
       tension: 0.25,
       userId: null,
-      metric: 'demand'
+      metric: 'active'
     },
     {
       label: t('admin.ops.concurrencyTrend.systemWaiting'),
-      data: points.map(point => point.system?.peak_waiting || 0),
-      borderColor: '#dc2626',
-      backgroundColor: '#dc2626',
+      data: points.map(point => pointSystemLanePeak(point, lane.key)?.peak_waiting || 0),
+      borderColor: lane.queueColor,
+      backgroundColor: lane.queueColor,
       borderDash: [6, 4],
       borderWidth: 1.5,
       pointRadius: 1,
@@ -98,14 +154,14 @@ const chartData = computed(() => {
     }
   ]
 
-  visibleUserIds.value.forEach((userId, index) => {
+  visibleUserIds(lane.key).forEach((userId, index) => {
     const color = palette[index % palette.length]
     datasets.push({
       label: userLabel(userId),
-      data: points.map(point => point.users?.[userId]?.peak_demand || 0),
+      data: points.map(point => pointUserLanePeak(point, userId, lane.key)?.peak_demand || 0),
       borderColor: color,
       backgroundColor: color,
-      borderWidth: 1.5,
+      borderWidth: 1.25,
       pointRadius: 1,
       pointHitRadius: 10,
       tension: 0.25,
@@ -118,9 +174,9 @@ const chartData = computed(() => {
     labels: points.map(point => formatMinute(point.bucket_start)),
     datasets
   }
-})
+}
 
-const chartOptions = computed(() => {
+function chartOptions(lane: LaneDefinition) {
   const dark = document.documentElement.classList.contains('dark')
   const textColor = dark ? '#9ca3af' : '#6b7280'
   const gridColor = dark ? '#374151' : '#e5e7eb'
@@ -145,14 +201,12 @@ const chartOptions = computed(() => {
             const userId = context.dataset.userId as string | null
             if (!userId) return `${context.dataset.label}: ${context.parsed.y}`
             const point = trend.value?.points?.[context.dataIndex]
-            const peak = point?.users?.[userId]
-            const user: UserConcurrencyTrendUser | undefined = trend.value?.users?.[userId]
+            const peak = point ? pointUserLanePeak(point, userId, lane.key) : undefined
             return t('admin.ops.concurrencyTrend.userTooltip', {
               user: userLabel(userId),
               demand: peak?.peak_demand || 0,
               active: peak?.peak_in_use || 0,
-              waiting: peak?.peak_waiting || 0,
-              limit: userLimitLabel(user)
+              waiting: peak?.peak_waiting || 0
             })
           }
         }
@@ -161,7 +215,7 @@ const chartOptions = computed(() => {
     scales: {
       x: {
         grid: { display: false },
-        ticks: { color: textColor, maxTicksLimit: 12, font: { size: 10 } }
+        ticks: { color: textColor, maxTicksLimit: 8, font: { size: 10 } }
       },
       y: {
         beginAtZero: true,
@@ -171,7 +225,7 @@ const chartOptions = computed(() => {
       }
     }
   }
-})
+}
 
 function pinSelectedUser() {
   const userId = selectedUserId.value
@@ -204,21 +258,16 @@ onMounted(loadData)
 </script>
 
 <template>
-  <div class="flex h-[420px] flex-col rounded-3xl bg-white p-6 shadow-sm ring-1 ring-gray-900/5 dark:bg-dark-800 dark:ring-dark-700">
+  <div class="flex min-h-[500px] flex-col rounded-lg bg-white p-5 shadow-sm ring-1 ring-gray-900/5 dark:bg-dark-800 dark:ring-dark-700">
     <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
       <div>
         <h3 class="text-sm font-bold text-gray-900 dark:text-white">{{ t('admin.ops.concurrencyTrend.title') }}</h3>
         <div class="mt-0.5 text-[11px] text-gray-500 dark:text-gray-400">{{ t('admin.ops.concurrencyTrend.subtitle') }}</div>
       </div>
-      <div v-if="trend?.enabled" class="flex flex-wrap items-center gap-3 text-[11px] text-gray-500 dark:text-gray-400">
-        <span>{{ t('admin.ops.concurrencyTrend.currentDemand') }} <strong class="font-mono text-gray-900 dark:text-white">{{ trend.current?.demand || 0 }}</strong></span>
-        <span>{{ t('admin.ops.concurrencyTrend.currentActive') }} <strong class="font-mono text-emerald-600 dark:text-emerald-400">{{ trend.current?.in_use || 0 }}</strong></span>
-        <span>{{ t('admin.ops.concurrencyTrend.currentWaiting') }} <strong class="font-mono text-red-600 dark:text-red-400">{{ trend.current?.waiting || 0 }}</strong></span>
-      </div>
-      <div class="flex min-w-0 items-center gap-2">
+      <div class="flex min-w-0 flex-1 items-center justify-end gap-2 sm:flex-none">
         <select
           v-model="selectedUserId"
-          class="h-8 min-w-[220px] rounded-lg border border-gray-200 bg-white px-2 text-xs text-gray-700 outline-none focus:border-blue-500 dark:border-dark-700 dark:bg-dark-900 dark:text-gray-200"
+          class="h-8 min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-2 text-xs text-gray-700 outline-none focus:border-blue-500 sm:w-[240px] sm:flex-none dark:border-dark-700 dark:bg-dark-900 dark:text-gray-200"
           :aria-label="t('admin.ops.concurrencyTrend.selectUser')"
           @change="pinSelectedUser"
         >
@@ -229,7 +278,7 @@ onMounted(loadData)
         </select>
         <button
           type="button"
-          class="flex h-8 w-8 items-center justify-center rounded-lg bg-gray-100 text-gray-600 transition-colors hover:bg-gray-200 disabled:opacity-50 dark:bg-dark-700 dark:text-gray-300 dark:hover:bg-dark-600"
+          class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gray-100 text-gray-600 transition-colors hover:bg-gray-200 disabled:opacity-50 dark:bg-dark-700 dark:text-gray-300 dark:hover:bg-dark-600"
           :disabled="loading"
           :title="t('common.refresh')"
           @click="loadData"
@@ -259,11 +308,28 @@ onMounted(loadData)
       {{ errorMessage }}
     </div>
 
-    <div class="min-h-0 flex-1">
-      <Line v-if="hasData" :data="chartData" :options="chartOptions" />
-      <div v-else class="flex h-full items-center justify-center text-sm text-gray-400">
-        {{ loading ? t('common.loading') : t('admin.ops.concurrencyTrend.empty') }}
-      </div>
+    <div class="grid min-h-0 flex-1 grid-cols-1 border-t border-gray-100 lg:grid-cols-3 dark:border-dark-700">
+      <section
+        v-for="(lane, index) in lanes"
+        :key="lane.key"
+        :data-lane="lane.key"
+        class="min-w-0 py-4 lg:px-4"
+        :class="{ 'border-t border-gray-100 lg:border-l lg:border-t-0 dark:border-dark-700': index > 0 }"
+      >
+        <div class="mb-2 flex items-center justify-between gap-2">
+          <h4 class="text-xs font-semibold text-gray-800 dark:text-gray-100">{{ lane.title }}</h4>
+          <div class="flex items-center gap-2 text-[10px] text-gray-500 dark:text-gray-400">
+            <span>{{ t('admin.ops.concurrencyTrend.currentActive') }} <strong class="font-mono" :style="{ color: lane.color }">{{ currentLane(lane.key).in_use }}</strong></span>
+            <span>{{ t('admin.ops.concurrencyTrend.currentWaiting') }} <strong class="font-mono text-red-600 dark:text-red-400">{{ currentLane(lane.key).waiting }}</strong></span>
+          </div>
+        </div>
+        <div class="h-[300px] min-h-0">
+          <Line v-if="hasLaneData(lane.key)" :data="laneChartData(lane)" :options="chartOptions(lane)" />
+          <div v-else class="flex h-full items-center justify-center text-xs text-gray-400">
+            {{ loading ? t('common.loading') : t('admin.ops.concurrencyTrend.laneEmpty') }}
+          </div>
+        </div>
+      </section>
     </div>
   </div>
 </template>
