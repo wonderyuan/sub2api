@@ -485,6 +485,32 @@ func (s *AccountUsageService) GetUsage(ctx context.Context, accountID int64, for
 	return nil, fmt.Errorf("account type %s does not support usage query", account.Type)
 }
 
+// RefreshOpenAIResetCreditSnapshot explicitly queries the OpenAI quota
+// endpoint and returns the persisted reset-credit snapshot for dashboard use.
+// It is deliberately separate from GetUsage: normal OpenAI dashboard refreshes
+// use lightweight rate-limit probes and must not fetch reset credits.
+func (s *AccountUsageService) RefreshOpenAIResetCreditSnapshot(ctx context.Context, accountID int64) (*OpenAIResetCreditSnapshot, error) {
+	if s == nil || s.accountRepo == nil || s.openAIQuotaService == nil {
+		return nil, fmt.Errorf("openai reset-credit query service is unavailable")
+	}
+	account, err := s.accountRepo.GetByID(ctx, accountID)
+	if err != nil {
+		return nil, fmt.Errorf("get account failed: %w", err)
+	}
+	if !SupportsOpenAIResetCredits(account) {
+		return nil, fmt.Errorf("account does not support OpenAI reset credits")
+	}
+	usage, err := s.openAIQuotaService.QueryUsage(ctx, accountID)
+	if err != nil {
+		return nil, err
+	}
+	snapshot := newOpenAIResetCreditSnapshot(usage.RateLimitResetCredits, time.Unix(usage.FetchedAt, 0))
+	if snapshot == nil {
+		return nil, fmt.Errorf("OpenAI reset credits are unavailable")
+	}
+	return snapshot, nil
+}
+
 // GetPassiveUsage 从 Account.Extra 中的被动采样数据构建 UsageInfo，不调用外部 API。
 // 仅适用于 Anthropic OAuth / SetupToken 账号。
 func (s *AccountUsageService) GetPassiveUsage(ctx context.Context, accountID int64) (*UsageInfo, error) {

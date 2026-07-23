@@ -22,6 +22,7 @@ func setupAccountListRouter() (*gin.Engine, *stubAdminService) {
 	router.GET("/api/v1/admin/accounts", handler.List)
 	router.GET("/api/v1/admin/accounts/usage-windows", handler.ListUsageWindows)
 	router.POST("/api/v1/admin/accounts/usage-windows/refresh", handler.RefreshUsageWindows)
+	router.POST("/api/v1/admin/accounts/usage-windows/openai-reset-credits/refresh", handler.RefreshOpenAIResetCredits)
 	return router, adminSvc
 }
 
@@ -39,6 +40,11 @@ func TestAccountHandlerListUsageWindowsUsesStoredSnapshots(t *testing.T) {
 			"codex_5h_reset_at":     now.Add(time.Hour).Format(time.RFC3339),
 			"codex_7d_used_percent": 60.0,
 			"codex_7d_reset_at":     now.Add(24 * time.Hour).Format(time.RFC3339),
+			"openai_rate_limit_reset_credits": map[string]any{
+				"available_count": 3,
+				"credits":         []map[string]any{{"expires_at": now.Add(48 * time.Hour).Format(time.RFC3339)}},
+				"checked_at":      now.Format(time.RFC3339),
+			},
 		},
 	}}
 
@@ -63,12 +69,56 @@ func TestAccountHandlerListUsageWindowsUsesStoredSnapshots(t *testing.T) {
 	require.Equal(t, 25.0, payload.Data.Items[0].FiveHour.Utilization)
 	require.Equal(t, 60.0, payload.Data.Items[0].SevenDay.Utilization)
 	require.True(t, payload.Data.Items[0].SupportsLiveRefresh)
+	require.True(t, payload.Data.Items[0].SupportsOpenAIResetCredits)
+	require.NotNil(t, payload.Data.Items[0].OpenAIResetCredits)
+	require.Equal(t, 3, payload.Data.Items[0].OpenAIResetCredits.AvailableCount)
+}
+
+func TestAccountHandlerListUsageWindowsDoesNotExposeResetCreditsForShadow(t *testing.T) {
+	router, adminSvc := setupAccountListRouter()
+	parentID := int64(81)
+	adminSvc.accounts = []service.Account{{
+		ID:              82,
+		Name:            "codex-shadow",
+		Platform:        service.PlatformOpenAI,
+		Type:            service.AccountTypeOAuth,
+		Status:          service.StatusActive,
+		ParentAccountID: &parentID,
+		Extra: map[string]any{
+			"openai_rate_limit_reset_credits": map[string]any{"available_count": 9, "checked_at": time.Now().UTC().Format(time.RFC3339)},
+		},
+	}}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts/usage-windows?page=1&page_size=10", nil)
+	router.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var payload struct {
+		Data struct {
+			Items []AccountUsageWindowItem `json:"items"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
+	require.Len(t, payload.Data.Items, 1)
+	require.False(t, payload.Data.Items[0].SupportsOpenAIResetCredits)
+	require.Nil(t, payload.Data.Items[0].OpenAIResetCredits)
 }
 
 func TestAccountHandlerRefreshUsageWindowsRejectsOversizedBatch(t *testing.T) {
 	router, _ := setupAccountListRouter()
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/usage-windows/refresh", strings.NewReader(`{"account_ids":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21]}`))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestAccountHandlerRefreshOpenAIResetCreditsRejectsOversizedBatch(t *testing.T) {
+	router, _ := setupAccountListRouter()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/usage-windows/openai-reset-credits/refresh", strings.NewReader(`{"account_ids":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21]}`))
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(rec, req)
 

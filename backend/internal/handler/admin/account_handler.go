@@ -194,17 +194,19 @@ type AccountWithConcurrency struct {
 }
 
 type AccountUsageWindowItem struct {
-	ID                  int64                  `json:"id"`
-	Name                string                 `json:"name"`
-	Platform            string                 `json:"platform"`
-	Type                string                 `json:"type"`
-	Status              string                 `json:"status"`
-	FiveHour            *service.UsageProgress `json:"five_hour"`
-	SevenDay            *service.UsageProgress `json:"seven_day"`
-	SevenDayCapacity    *SevenDayQuotaCapacity `json:"seven_day_capacity,omitempty"`
-	UpdatedAt           *time.Time             `json:"updated_at"`
-	SupportsLiveRefresh bool                   `json:"supports_live_refresh"`
-	RefreshError        string                 `json:"refresh_error,omitempty"`
+	ID                         int64                              `json:"id"`
+	Name                       string                             `json:"name"`
+	Platform                   string                             `json:"platform"`
+	Type                       string                             `json:"type"`
+	Status                     string                             `json:"status"`
+	FiveHour                   *service.UsageProgress             `json:"five_hour"`
+	SevenDay                   *service.UsageProgress             `json:"seven_day"`
+	SevenDayCapacity           *SevenDayQuotaCapacity             `json:"seven_day_capacity,omitempty"`
+	UpdatedAt                  *time.Time                         `json:"updated_at"`
+	SupportsLiveRefresh        bool                               `json:"supports_live_refresh"`
+	SupportsOpenAIResetCredits bool                               `json:"supports_openai_reset_credits"`
+	OpenAIResetCredits         *service.OpenAIResetCreditSnapshot `json:"openai_reset_credits,omitempty"`
+	RefreshError               string                             `json:"refresh_error,omitempty"`
 }
 
 // SevenDayQuotaCapacity compares the estimated upstream capacity with local
@@ -224,6 +226,12 @@ type RefreshAccountUsageWindowsRequest struct {
 	AccountIDs []int64 `json:"account_ids" binding:"required"`
 }
 
+type OpenAIResetCreditRefreshResult struct {
+	ID                 int64                              `json:"id"`
+	OpenAIResetCredits *service.OpenAIResetCreditSnapshot `json:"openai_reset_credits,omitempty"`
+	RefreshError       string                             `json:"refresh_error,omitempty"`
+}
+
 func accountUsageWindowItem(account *service.Account, usage *service.UsageInfo) AccountUsageWindowItem {
 	item := AccountUsageWindowItem{}
 	if account != nil {
@@ -233,6 +241,10 @@ func accountUsageWindowItem(account *service.Account, usage *service.UsageInfo) 
 		item.Type = account.Type
 		item.Status = account.Status
 		item.SupportsLiveRefresh = service.SupportsLiveAccountUsageRefresh(account)
+		item.SupportsOpenAIResetCredits = service.SupportsOpenAIResetCredits(account)
+		if item.SupportsOpenAIResetCredits {
+			item.OpenAIResetCredits = service.OpenAIResetCreditSnapshotFromExtra(account.Extra)
+		}
 	}
 	if usage != nil {
 		item.FiveHour = usage.FiveHour
@@ -999,6 +1011,74 @@ func (h *AccountHandler) RefreshUsageWindows(c *gin.Context) {
 			item.SevenDay = usage.SevenDay
 			item.SevenDayCapacity = buildSevenDayQuotaCapacity(item.SevenDay, allocationForAccount(allocations, account.ID))
 			results[i] = item
+			return nil
+		})
+	}
+	_ = g.Wait()
+
+	response.Success(c, results)
+}
+
+// RefreshOpenAIResetCredits explicitly refreshes the cached reset-credit
+// snapshot for selected OpenAI OAuth parent accounts. It is kept separate from
+// the normal usage-window refresh because reset-credit queries make an
+// additional upstream request and must never run on dashboard page load.
+// POST /api/v1/admin/accounts/usage-windows/openai-reset-credits/refresh
+func (h *AccountHandler) RefreshOpenAIResetCredits(c *gin.Context) {
+	var req RefreshAccountUsageWindowsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: account_ids is required")
+		return
+	}
+	if len(req.AccountIDs) == 0 || len(req.AccountIDs) > 20 {
+		response.BadRequest(c, "account_ids must contain between 1 and 20 items")
+		return
+	}
+
+	seen := make(map[int64]struct{}, len(req.AccountIDs))
+	ids := make([]int64, 0, len(req.AccountIDs))
+	for _, id := range req.AccountIDs {
+		if id <= 0 {
+			response.BadRequest(c, "account_ids must contain positive IDs")
+			return
+		}
+		if _, ok := seen[id]; !ok {
+			seen[id] = struct{}{}
+			ids = append(ids, id)
+		}
+	}
+
+	accounts, err := h.adminService.GetAccountsByIDs(c.Request.Context(), ids)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	results := make([]OpenAIResetCreditRefreshResult, len(accounts))
+	g, gctx := errgroup.WithContext(c.Request.Context())
+	g.SetLimit(2)
+	for i := range accounts {
+		i := i
+		account := accounts[i]
+		g.Go(func() error {
+			result := OpenAIResetCreditRefreshResult{ID: account.ID}
+			if !service.SupportsOpenAIResetCredits(account) {
+				result.RefreshError = "OPENAI_RESET_CREDITS_UNSUPPORTED"
+				results[i] = result
+				return nil
+			}
+			if h.accountUsageService == nil {
+				result.RefreshError = "USAGE_SERVICE_UNAVAILABLE"
+				results[i] = result
+				return nil
+			}
+			snapshot, refreshErr := h.accountUsageService.RefreshOpenAIResetCreditSnapshot(gctx, account.ID)
+			if refreshErr != nil || snapshot == nil {
+				slog.Warn("dashboard_openai_reset_credits_refresh_failed", "account_id", account.ID, "error", refreshErr)
+				result.RefreshError = "OPENAI_RESET_CREDITS_UNAVAILABLE"
+			} else {
+				result.OpenAIResetCredits = snapshot
+			}
+			results[i] = result
 			return nil
 		})
 	}

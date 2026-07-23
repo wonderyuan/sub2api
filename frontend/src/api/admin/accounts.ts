@@ -37,6 +37,20 @@ export interface AccountUsageWindowItem {
   seven_day_capacity?: SevenDayQuotaCapacity | null
   updated_at: string | null
   supports_live_refresh: boolean
+  supports_openai_reset_credits?: boolean
+  openai_reset_credits?: OpenAIResetCreditSnapshot | null
+  refresh_error?: string
+}
+
+export interface OpenAIResetCreditSnapshot {
+  available_count: number
+  credits?: OpenAIRateLimitResetCreditDetail[]
+  checked_at: string
+}
+
+export interface OpenAIResetCreditRefreshResult {
+  id: number
+  openai_reset_credits?: OpenAIResetCreditSnapshot | null
   refresh_error?: string
 }
 
@@ -70,6 +84,14 @@ export async function listUsageWindows(
 export async function refreshUsageWindows(accountIds: number[]): Promise<AccountUsageWindowItem[]> {
   const { data } = await apiClient.post<AccountUsageWindowItem[]>(
     '/admin/accounts/usage-windows/refresh',
+    { account_ids: accountIds }
+  )
+  return data
+}
+
+export async function refreshOpenAIResetCredits(accountIds: number[]): Promise<OpenAIResetCreditRefreshResult[]> {
+  const { data } = await apiClient.post<OpenAIResetCreditRefreshResult[]>(
+    '/admin/accounts/usage-windows/openai-reset-credits/refresh',
     { account_ids: accountIds }
   )
   return data
@@ -936,6 +958,7 @@ export const accountsAPI = {
   list,
   listUsageWindows,
   refreshUsageWindows,
+  refreshOpenAIResetCredits,
   listWithEtag,
   getById,
   create,

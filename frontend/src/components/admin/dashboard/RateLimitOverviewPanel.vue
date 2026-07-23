@@ -78,6 +78,22 @@
               />
               <span class="hidden sm:inline">{{ t('admin.dashboard.rateLimits.liveRefresh') }}</span>
             </button>
+            <button
+              v-if="activeTab === 'accounts'"
+              type="button"
+              data-testid="reset-credit-refresh"
+              class="btn btn-secondary h-9 flex-shrink-0 rounded-lg px-3 py-0 text-xs"
+              :title="t('admin.dashboard.rateLimits.resetCreditsRefreshHint')"
+              :disabled="resetCreditRefreshing || activeLoading || resetCreditRefreshableAccountIds.length === 0"
+              @click="refreshOpenAIResetCredits"
+            >
+              <Icon
+                :name="resetCreditRefreshing ? 'refresh' : 'key'"
+                size="sm"
+                :class="resetCreditRefreshing ? 'animate-spin' : ''"
+              />
+              <span class="hidden sm:inline">{{ t('admin.dashboard.rateLimits.resetCreditsRefresh') }}</span>
+            </button>
           </div>
         </div>
       </div>
@@ -201,6 +217,74 @@
               <p v-else class="text-[11px] text-gray-400">
                 {{ t('admin.dashboard.rateLimits.capacityUnavailable') }}
               </p>
+            </div>
+            <div
+              v-if="item.supports_openai_reset_credits"
+              class="border-t border-gray-100 px-3.5 py-2.5 dark:border-dark-700/70"
+              data-testid="reset-credit-summary"
+            >
+              <button
+                type="button"
+                class="flex w-full items-center justify-between gap-3 text-left"
+                :aria-expanded="isResetCreditDetailsOpen(item.id)"
+                :aria-label="t('admin.dashboard.rateLimits.resetCreditsDetails')"
+                @click="toggleResetCreditDetails(item.id)"
+              >
+                <span class="flex min-w-0 items-center gap-1.5">
+                  <Icon name="key" size="xs" class="text-indigo-500" />
+                  <span class="text-[11px] font-semibold text-gray-600 dark:text-gray-300">
+                    {{ t('admin.dashboard.rateLimits.resetCredits') }}
+                  </span>
+                  <span
+                    v-if="item.openai_reset_credits"
+                    class="rounded bg-indigo-50 px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300"
+                  >
+                    {{ t('admin.dashboard.rateLimits.resetCreditsCount', { count: item.openai_reset_credits.available_count }) }}
+                  </span>
+                  <span v-else class="text-[11px] text-gray-400">
+                    {{ t('admin.dashboard.rateLimits.resetCreditsUnknown') }}
+                  </span>
+                </span>
+                <Icon :name="isResetCreditDetailsOpen(item.id) ? 'chevronUp' : 'chevronDown'" size="xs" class="flex-shrink-0 text-gray-400" />
+              </button>
+              <div
+                v-if="isResetCreditDetailsOpen(item.id)"
+                class="mt-2 border-t border-gray-100 pt-2 text-[11px] dark:border-dark-700/70"
+                data-testid="reset-credit-details"
+              >
+                <template v-if="item.openai_reset_credits">
+                  <p v-if="item.openai_reset_credits.available_count === 0" class="text-gray-400">
+                    {{ t('admin.dashboard.rateLimits.resetCreditsNoAvailable') }}
+                  </p>
+                  <ul v-else-if="item.openai_reset_credits.credits?.length" class="space-y-1 text-gray-600 dark:text-gray-300">
+                    <li
+                      v-for="(credit, index) in item.openai_reset_credits.credits"
+                      :key="`${credit.expires_at}-${index}`"
+                      class="flex min-w-0 items-center gap-1.5"
+                    >
+                      <span class="h-1 w-1 flex-shrink-0 rounded-full bg-indigo-400"></span>
+                      <span class="truncate" :title="formatDateTime(credit.expires_at)">
+                        {{ t('admin.dashboard.rateLimits.resetCreditsExpiresAt', { time: formatDateTime(credit.expires_at) }) }}
+                      </span>
+                    </li>
+                  </ul>
+                  <p
+                    v-if="item.openai_reset_credits.credits?.length && item.openai_reset_credits.credits.length < item.openai_reset_credits.available_count"
+                    class="mt-1 text-[10px] text-gray-400"
+                  >
+                    {{ t('admin.dashboard.rateLimits.resetCreditsExpiryPartial', { shown: item.openai_reset_credits.credits.length, total: item.openai_reset_credits.available_count }) }}
+                  </p>
+                  <p v-if="!item.openai_reset_credits.credits?.length" class="text-gray-400">
+                    {{ t('admin.dashboard.rateLimits.resetCreditsExpiryUnavailable') }}
+                  </p>
+                  <p class="mt-1.5 text-[10px] text-gray-400" :title="formatDateTime(item.openai_reset_credits.checked_at)">
+                    {{ t('admin.dashboard.rateLimits.resetCreditsCheckedAt', { time: formatDateTime(item.openai_reset_credits.checked_at) }) }}
+                  </p>
+                </template>
+                <p v-else class="text-gray-400">
+                  {{ t('admin.dashboard.rateLimits.resetCreditsUnavailable') }}
+                </p>
+              </div>
             </div>
           </article>
         </div>
@@ -473,7 +557,9 @@ const keyLoaded = ref(false)
 const accountError = ref('')
 const keyError = ref('')
 const liveRefreshing = ref(false)
+const resetCreditRefreshing = ref(false)
 const liveMessage = ref('')
+const expandedResetCreditAccountIDs = ref<number[]>([])
 const openBatchGroupKey = ref<string | null>(null)
 const openBatchGroup = ref<ApiKeyRateLimitGroup | null>(null)
 const openBatchAction = ref<KeyBatchAction | null>(null)
@@ -535,6 +621,9 @@ const activeSearch = computed({
   }
 })
 const refreshableAccountIds = computed(() => accountItems.value.filter((item) => item.supports_live_refresh).map((item) => item.id))
+const resetCreditRefreshableAccountIds = computed(() => accountItems.value
+  .filter((item) => item.supports_openai_reset_credits)
+  .map((item) => item.id))
 const canSubmitBatchAction = computed(() => {
   if (batchSubmitting.value || selectedBatchKeyIDs.value.length === 0) return false
   return openBatchAction.value === 'reset' || (openBatchAction.value === 'sync' && selectedSyncAccountID.value !== null)
@@ -738,6 +827,42 @@ async function refreshUpstream(): Promise<void> {
     liveMessage.value = error?.message || t('admin.dashboard.rateLimits.liveFailed')
   } finally {
     liveRefreshing.value = false
+  }
+}
+
+function isResetCreditDetailsOpen(accountID: number): boolean {
+  return expandedResetCreditAccountIDs.value.includes(accountID)
+}
+
+function toggleResetCreditDetails(accountID: number): void {
+  expandedResetCreditAccountIDs.value = isResetCreditDetailsOpen(accountID)
+    ? expandedResetCreditAccountIDs.value.filter((id) => id !== accountID)
+    : [...expandedResetCreditAccountIDs.value, accountID]
+}
+
+async function refreshOpenAIResetCredits(): Promise<void> {
+  const ids = resetCreditRefreshableAccountIds.value
+  if (ids.length === 0 || resetCreditRefreshing.value) return
+  resetCreditRefreshing.value = true
+  liveMessage.value = ''
+  try {
+    const refreshed = await adminAPI.accounts.refreshOpenAIResetCredits(ids)
+    const byID = new Map(refreshed.map((item) => [item.id, item]))
+    accountItems.value = accountItems.value.map((item) => {
+      const result = byID.get(item.id)
+      return result?.openai_reset_credits
+        ? { ...item, openai_reset_credits: result.openai_reset_credits }
+        : item
+    })
+    const failures = refreshed.filter((item) => item.refresh_error).length
+    const successes = refreshed.length - failures
+    liveMessage.value = failures > 0
+      ? t('admin.dashboard.rateLimits.resetCreditsRefreshPartial', { success: successes, failed: failures })
+      : t('admin.dashboard.rateLimits.resetCreditsRefreshSuccess', { count: successes })
+  } catch (error: any) {
+    liveMessage.value = error?.message || t('admin.dashboard.rateLimits.resetCreditsRefreshFailed')
+  } finally {
+    resetCreditRefreshing.value = false
   }
 }
 
