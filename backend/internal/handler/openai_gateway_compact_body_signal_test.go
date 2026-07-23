@@ -135,12 +135,12 @@ func TestOpenAICompactRequestBodyLimitBypass(t *testing.T) {
 			want:      true,
 		},
 		{
-			name:      "non-streaming compact body signal",
+			name:      "non-streaming legacy compact body signal",
 			path:      "/v1/responses",
 			body:      []byte(`{"model":"gpt-5.6-sol","stream":false,"input":[{"type":"compaction_trigger"}]}`),
 			account:   allowedAccount,
 			bodyBytes: 11,
-			want:      false,
+			want:      true,
 		},
 		{
 			name:      "account has not opted in",

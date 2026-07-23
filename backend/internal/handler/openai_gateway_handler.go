@@ -241,9 +241,8 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	setOpsRequestContext(c, "", false)
 	sessionHashBody := body
 	// Classify before legacy body-signal normalization can rewrite /responses
-	// to /responses/compact. The native compact path and an explicit streaming
-	// compaction body signal are eligible to bypass an opted-in account's local
-	// limit.
+	// to /responses/compact. The native compact path and an explicit compaction
+	// body signal are eligible to bypass an opted-in account's local limit.
 	compactRequest := isOpenAICompactRequest(c, body)
 	body, ok = h.normalizeOpenAIResponsesCompactRequest(c, reqLog, body)
 	if !ok {
@@ -695,12 +694,12 @@ func isOpenAIRemoteCompactPath(c *gin.Context) bool {
 }
 
 // isOpenAICompactRequest identifies native remote compact requests and legacy
-// streaming body-signal compaction requests used by compatible clients.
+// body-signal compaction requests used by compatible clients.
 func isOpenAICompactRequest(c *gin.Context, body []byte) bool {
 	if isOpenAIRemoteCompactPath(c) {
 		return true
 	}
-	return isBareOpenAIResponsesPath(c) && isOpenAIStreamingCompactionBodySignal(body)
+	return isBareOpenAIResponsesPath(c) && isOpenAICompactionBodySignal(body)
 }
 
 // shouldBypassAccountRequestBodyLimitForCompact keeps the account-level limit
@@ -724,13 +723,13 @@ func isBareOpenAIResponsesPath(c *gin.Context) bool {
 	return strings.HasSuffix(normalizedPath, "/responses")
 }
 
-func isOpenAIStreamingCompactionBodySignal(body []byte) bool {
-	stream, valid := parseOpenAICompatibleStream(body)
-	return valid && stream && service.HasCompactionTriggerInInput(body)
+func isOpenAICompactionBodySignal(body []byte) bool {
+	return service.HasCompactionTriggerInInput(body)
 }
 
 func isOpenAIRemoteCompactionV2Request(c *gin.Context, body []byte) bool {
-	if !isOpenAIStreamingCompactionBodySignal(body) || c == nil || c.Request == nil {
+	stream, valid := parseOpenAICompatibleStream(body)
+	if !valid || !stream || !isOpenAICompactionBodySignal(body) || c == nil || c.Request == nil {
 		return false
 	}
 	for _, header := range c.Request.Header.Values("x-codex-beta-features") {
