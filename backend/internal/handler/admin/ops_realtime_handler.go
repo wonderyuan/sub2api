@@ -125,6 +125,7 @@ func (h *OpsHandler) GetUserConcurrencyTrend(c *gin.Context) {
 			"bucket":        "minute",
 			"current":       service.ConcurrencySnapshot{},
 			"current_lanes": service.ConcurrencyLaneSnapshots{},
+			"latency_lanes": service.RequestBodyLaneLatencySummaries{},
 			"points":        []service.UserConcurrencyTrendPoint{},
 			"users":         map[int64]service.UserConcurrencyTrendUser{},
 		})

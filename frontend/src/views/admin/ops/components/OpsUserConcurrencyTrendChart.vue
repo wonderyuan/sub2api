@@ -8,6 +8,7 @@ import {
   opsAPI,
   type ConcurrencyPeak,
   type ConcurrencySnapshot,
+  type OpsPercentiles,
   type OpsUserConcurrencyTrendResponse,
   type UserConcurrencyTrendPoint,
   type UserConcurrencyTrendUser
@@ -145,8 +146,25 @@ const statisticDefinitions: Array<{ key: keyof NumberSummary; label: string }> =
   { key: 'max', label: 'Max' }
 ]
 
+const latencyStatisticKeys: Record<keyof NumberSummary, keyof OpsPercentiles> = {
+  p95: 'p95_ms',
+  p90: 'p90_ms',
+  p50: 'p50_ms',
+  avg: 'avg_ms',
+  max: 'max_ms'
+}
+
 function formatStatistic(value: number): string {
   return new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(value)
+}
+
+function laneLatencyStatistic(lane: LaneKey, key: keyof NumberSummary): number | null {
+  return trend.value?.latency_lanes?.[lane]?.[latencyStatisticKeys[key]] ?? null
+}
+
+function formatMilliseconds(value: number | null): string {
+  if (value === null) return '-'
+  return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(value)} ms`
 }
 
 function laneChartData(lane: LaneDefinition) {
@@ -348,21 +366,56 @@ onMounted(loadData)
             <span>{{ t('admin.ops.concurrencyTrend.currentWaiting') }} <strong class="font-mono text-red-600 dark:text-red-400">{{ currentLane(lane.key).waiting }}</strong></span>
           </div>
         </div>
-        <div
-          class="mb-3 grid grid-cols-5 border-y border-gray-100 py-2 dark:border-dark-700"
-          :aria-label="`${lane.title} ${t('admin.ops.concurrencyTrend.statistics')}`"
-        >
+        <div class="mb-3 border-y border-gray-100 dark:border-dark-700">
           <div
-            v-for="statistic in statisticDefinitions"
-            :key="statistic.key"
-            class="min-w-0 text-center"
-            :data-stat="statistic.key"
+            class="py-2"
+            :aria-label="`${lane.title} ${t('admin.ops.concurrencyTrend.demandStatistics')}`"
           >
-            <div class="text-[9px] font-semibold uppercase text-gray-400 dark:text-gray-500">
-              {{ statistic.label }}
+            <div class="mb-1 px-1 text-[9px] font-semibold text-gray-400 dark:text-gray-500">
+              {{ t('admin.ops.concurrencyTrend.demandStatistics') }}
             </div>
-            <div class="truncate font-mono text-xs font-semibold text-gray-800 dark:text-gray-100">
-              {{ formatStatistic(laneStatistics[lane.key][statistic.key]) }}
+            <div class="grid grid-cols-5">
+              <div
+                v-for="statistic in statisticDefinitions"
+                :key="statistic.key"
+                class="min-w-0 text-center"
+                data-metric="demand"
+                :data-stat="statistic.key"
+              >
+                <div class="text-[9px] font-semibold uppercase text-gray-400 dark:text-gray-500">
+                  {{ statistic.label }}
+                </div>
+                <div class="truncate font-mono text-xs font-semibold text-gray-800 dark:text-gray-100">
+                  {{ formatStatistic(laneStatistics[lane.key][statistic.key]) }}
+                </div>
+              </div>
+            </div>
+          </div>
+          <div
+            class="border-t border-gray-100 py-2 dark:border-dark-700"
+            :aria-label="`${lane.title} ${t('admin.ops.concurrencyTrend.responseTimeStatistics')}`"
+          >
+            <div class="mb-1 px-1 text-[9px] font-semibold text-gray-400 dark:text-gray-500">
+              {{ t('admin.ops.concurrencyTrend.responseTimeStatistics') }}
+            </div>
+            <div class="grid grid-cols-5">
+              <div
+                v-for="statistic in statisticDefinitions"
+                :key="statistic.key"
+                class="min-w-0 text-center"
+                data-metric="latency"
+                :data-stat="statistic.key"
+              >
+                <div class="text-[9px] font-semibold uppercase text-gray-400 dark:text-gray-500">
+                  {{ statistic.label }}
+                </div>
+                <div
+                  class="truncate font-mono text-[10px] font-semibold text-gray-800 dark:text-gray-100"
+                  :title="formatMilliseconds(laneLatencyStatistic(lane.key, statistic.key))"
+                >
+                  {{ formatMilliseconds(laneLatencyStatistic(lane.key, statistic.key)) }}
+                </div>
+              </div>
             </div>
           </div>
         </div>

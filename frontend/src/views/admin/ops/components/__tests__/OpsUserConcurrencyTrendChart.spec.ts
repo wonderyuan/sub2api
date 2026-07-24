@@ -46,6 +46,11 @@ describe('OpsUserConcurrencyTrendChart', () => {
         heavy: { in_use: 2, waiting: 1, demand: 3 },
         recovery: { in_use: 1, waiting: 0, demand: 1 }
       },
+      latency_lanes: {
+        normal: { p95_ms: 950, p90_ms: 900, p50_ms: 500, avg_ms: 600, max_ms: 1200 },
+        heavy: { p95_ms: 2500, p90_ms: 2200, p50_ms: 1500, avg_ms: 1700, max_ms: 3000 },
+        recovery: { p95_ms: 4200, p90_ms: 4000, p50_ms: 3200, avg_ms: 3500, max_ms: 5000 }
+      },
       points: [
         {
           bucket_start: '2026-07-19T12:00:00Z',
@@ -103,14 +108,17 @@ describe('OpsUserConcurrencyTrendChart', () => {
     expect(charts[2].props('data').datasets[0].data).toEqual([1])
 
     const normalLane = wrapper.find('[data-lane="normal"]')
-    expect(normalLane.find('[data-stat="p95"]').text()).toContain('5')
-    expect(normalLane.find('[data-stat="p90"]').text()).toContain('5')
-    expect(normalLane.find('[data-stat="p50"]').text()).toContain('5')
-    expect(normalLane.find('[data-stat="avg"]').text()).toContain('5')
-    expect(normalLane.find('[data-stat="max"]').text()).toContain('5')
+    expect(normalLane.find('[data-metric="demand"][data-stat="p95"]').text()).toContain('5')
+    expect(normalLane.find('[data-metric="demand"][data-stat="p90"]').text()).toContain('5')
+    expect(normalLane.find('[data-metric="demand"][data-stat="p50"]').text()).toContain('5')
+    expect(normalLane.find('[data-metric="demand"][data-stat="avg"]').text()).toContain('5')
+    expect(normalLane.find('[data-metric="demand"][data-stat="max"]').text()).toContain('5')
 
-    expect(wrapper.find('[data-lane="heavy"] [data-stat="avg"]').text()).toContain('3')
-    expect(wrapper.find('[data-lane="recovery"] [data-stat="max"]').text()).toContain('1')
+    expect(wrapper.find('[data-lane="heavy"] [data-metric="demand"][data-stat="avg"]').text()).toContain('3')
+    expect(wrapper.find('[data-lane="recovery"] [data-metric="demand"][data-stat="max"]').text()).toContain('1')
+    expect(normalLane.find('[data-metric="latency"][data-stat="p95"]').text()).toContain('950 ms')
+    expect(wrapper.find('[data-lane="heavy"] [data-metric="latency"][data-stat="avg"]').text()).toContain('1,700 ms')
+    expect(wrapper.find('[data-lane="recovery"] [data-metric="latency"][data-stat="max"]').text()).toContain('5,000 ms')
 
     await wrapper.find('select').setValue('6')
     expect(wrapper.findAll('button').some(button => button.text().includes('zeta'))).toBe(true)

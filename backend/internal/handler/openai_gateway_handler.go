@@ -478,7 +478,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		sessionHash = ensureOpenAIPoolModeSessionHash(sessionHash, account)
 		reqLog.Debug("openai.account_selected", zap.Int64("account_id", account.ID), zap.String("account_name", account.Name))
 		setOpsSelectedAccount(c, account.ID, account.Platform)
-		bodyLaneRelease, admitted := h.acquireResponsesRequestBodyLane(
+		bodyLaneRelease, requestBodyLane, admitted := h.acquireResponsesRequestBodyLane(
 			c, reqLog, selection, subject.UserID, requestBodyBytes, compactRequest, reqStream, &streamStarted, resolveNormalConcurrency, reserveNonNormalConcurrency,
 		)
 		if !admitted {
@@ -660,6 +660,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 				UserAgent:          userAgent,
 				IPAddress:          clientIP,
 				RequestBodyBytes:   requestBodyBytes,
+				RequestBodyLane:    requestBodyLane,
 				RequestPayloadHash: requestPayloadHash,
 				APIKeyService:      h.apiKeyService,
 				QuotaPlatform:      quotaPlatform,

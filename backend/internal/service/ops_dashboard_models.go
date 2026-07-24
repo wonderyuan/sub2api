@@ -8,6 +8,7 @@ type OpsDashboardFilter struct {
 
 	Platform string
 	GroupID  *int64
+	UserID   *int64
 
 	// QueryMode controls whether dashboard queries should use raw logs or pre-aggregated tables.
 	// Expected values: auto/raw/preagg (see OpsQueryMode).
@@ -114,7 +115,18 @@ type OpsInvestigationResponse struct {
 
 type OpsLatencyHistogramBucket struct {
 	Range string `json:"range"`
+	MinMs int    `json:"min_ms"`
+	MaxMs *int   `json:"max_ms"`
 	Count int64  `json:"count"`
+}
+
+type OpsLatencyUserSummary struct {
+	UserID        int64  `json:"user_id"`
+	Username      string `json:"username"`
+	Email         string `json:"email"`
+	Deleted       bool   `json:"deleted"`
+	RequestCount  int64  `json:"request_count"`
+	AvgDurationMs int    `json:"avg_duration_ms"`
 }
 
 // OpsLatencyHistogramResponse is a coarse latency distribution histogram (success requests only).
@@ -124,7 +136,11 @@ type OpsLatencyHistogramResponse struct {
 	EndTime   time.Time `json:"end_time"`
 	Platform  string    `json:"platform"`
 	GroupID   *int64    `json:"group_id"`
+	UserID    *int64    `json:"user_id"`
 
-	TotalRequests int64                        `json:"total_requests"`
-	Buckets       []*OpsLatencyHistogramBucket `json:"buckets"`
+	TotalRequests  int64                        `json:"total_requests"`
+	AvgDurationMs  *int                         `json:"avg_duration_ms"`
+	TopAvgUsers    []*OpsLatencyUserSummary     `json:"top_avg_users"`
+	AvailableUsers []*OpsLatencyUserSummary     `json:"available_users"`
+	Buckets        []*OpsLatencyHistogramBucket `json:"buckets"`
 }

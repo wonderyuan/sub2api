@@ -64,12 +64,12 @@ func (h *OpenAIGatewayHandler) acquireResponsesRequestBodyLane(
 	streamStarted *bool,
 	resolveNormal func(),
 	reserveNonNormal func(),
-) (func(), bool) {
+) (func(), service.RequestBodyLane, bool) {
 	if selection == nil || selection.Account == nil {
 		if resolveNormal != nil {
 			resolveNormal()
 		}
-		return nil, true
+		return nil, service.RequestBodyLaneNormal, true
 	}
 	account := selection.Account
 	if reserveNonNormal != nil {
@@ -81,7 +81,7 @@ func (h *OpenAIGatewayHandler) acquireResponsesRequestBodyLane(
 		if resolveNormal != nil {
 			resolveNormal()
 		}
-		return nil, true
+		return nil, service.RequestBodyLaneNormal, true
 	}
 	c.Header("X-Sub2API-Request-Body-Policy", "tiered-admission")
 	c.Header("X-Sub2API-Request-Body-Lane", string(lane))
@@ -116,13 +116,13 @@ func (h *OpenAIGatewayHandler) acquireResponsesRequestBodyLane(
 		h.handleStreamingAwareErrorWithCode(
 			c, http.StatusRequestEntityTooLarge, "invalid_request_error", code, message, *streamStarted, false,
 		)
-		return nil, false
+		return nil, lane, false
 	}
 	if lane == service.RequestBodyLaneNormal {
 		if resolveNormal != nil {
 			resolveNormal()
 		}
-		return nil, true
+		return nil, lane, true
 	}
 
 	scopeID := account.ID
@@ -139,10 +139,10 @@ func (h *OpenAIGatewayHandler) acquireResponsesRequestBodyLane(
 		h.handleStreamingAwareErrorWithCode(
 			c, http.StatusServiceUnavailable, "api_error", requestBodyAdmissionUnavailableCode, "Request body admission is temporarily unavailable", *streamStarted, false,
 		)
-		return nil, false
+		return nil, lane, false
 	}
 	if acquired {
-		return wrapReleaseOnDone(c.Request.Context(), release), true
+		return wrapReleaseOnDone(c.Request.Context(), release), lane, true
 	}
 
 	// The scheduler may have optimistically reserved an account slot. Large
@@ -163,7 +163,7 @@ func (h *OpenAIGatewayHandler) acquireResponsesRequestBodyLane(
 			)
 		}
 		if c.Request.Context().Err() != nil {
-			return nil, false
+			return nil, lane, false
 		}
 		var queueFullErr *WaitQueueFullError
 		var concurrencyErr *ConcurrencyError
@@ -172,12 +172,12 @@ func (h *OpenAIGatewayHandler) acquireResponsesRequestBodyLane(
 			h.handleStreamingAwareErrorWithCode(
 				c, http.StatusTooManyRequests, "rate_limit_error", largeRequestQueueTimeoutCode, "Large request queue is full or timed out; retry later", *streamStarted, false,
 			)
-			return nil, false
+			return nil, lane, false
 		}
 		h.handleStreamingAwareErrorWithCode(
 			c, http.StatusServiceUnavailable, "api_error", requestBodyAdmissionUnavailableCode, "Request body admission is temporarily unavailable", *streamStarted, false,
 		)
-		return nil, false
+		return nil, lane, false
 	}
 	if reqLog != nil {
 		reqLog.Info("openai.request_body_lane_wait_succeeded",
@@ -187,7 +187,7 @@ func (h *OpenAIGatewayHandler) acquireResponsesRequestBodyLane(
 			zap.Int64("wait_ms", time.Since(waitStartedAt).Milliseconds()),
 		)
 	}
-	return wrapReleaseOnDone(c.Request.Context(), release), true
+	return wrapReleaseOnDone(c.Request.Context(), release), lane, true
 }
 
 func extractMaxBytesError(err error) (*http.MaxBytesError, bool) {

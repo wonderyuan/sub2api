@@ -28,6 +28,7 @@ type OpsRepository interface {
 	GetLatencyHistogram(ctx context.Context, filter *OpsDashboardFilter) (*OpsLatencyHistogramResponse, error)
 	GetErrorTrend(ctx context.Context, filter *OpsDashboardFilter, bucketSeconds int) (*OpsErrorTrendResponse, error)
 	GetErrorDistribution(ctx context.Context, filter *OpsDashboardFilter) (*OpsErrorDistributionResponse, error)
+	GetUserErrorDistribution(ctx context.Context, filter *OpsDashboardFilter) (*OpsUserErrorDistributionResponse, error)
 	GetInvestigationErrorGroups(ctx context.Context, filter *OpsDashboardFilter) ([]*OpsInvestigationErrorGroup, error)
 	GetOpenAITokenStats(ctx context.Context, filter *OpsOpenAITokenStatsFilter) (*OpsOpenAITokenStatsResponse, error)
 

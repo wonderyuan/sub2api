@@ -20,6 +20,28 @@ function createDatasetLegend(count: number) {
   return { visibility, chart, click }
 }
 
+function createDataLegend(count: number) {
+  const visibility = Array.from({ length: count }, () => true)
+  const items: LegendItem[] = visibility.map((_, index) => ({
+    text: `item-${index}`,
+    index
+  }))
+  const chart = {
+    isDatasetVisible: vi.fn(),
+    setDatasetVisibility: vi.fn(),
+    getDataVisibility: (index: number) => visibility[index],
+    toggleDataVisibility: (index: number) => { visibility[index] = !visibility[index] },
+    update: vi.fn()
+  }
+  const legend = { chart, legendItems: items } as unknown as LegendElement<ChartType>
+  const click = (index: number) => focusOrAccumulateLegendClick(
+    {} as ChartEvent,
+    { ...items[index] },
+    legend
+  )
+  return { visibility, click }
+}
+
 describe('focusOrAccumulateLegendClick', () => {
   it('focuses the first clicked series, accumulates later series, and restores all', () => {
     const { visibility, chart, click } = createDatasetLegend(3)
@@ -35,7 +57,17 @@ describe('focusOrAccumulateLegendClick', () => {
     expect(chart.update).toHaveBeenCalledTimes(3)
   })
 
-  it('removes a selected series without allowing an empty chart', () => {
+  it('restores all series when the sole focused series is clicked again', () => {
+    const { visibility, click } = createDatasetLegend(3)
+
+    click(0)
+    expect(visibility).toEqual([true, false, false])
+
+    click(0)
+    expect(visibility).toEqual([true, true, true])
+  })
+
+  it('removes a selected series in multi-select mode and restores instead of becoming empty', () => {
     const { visibility, click } = createDatasetLegend(3)
 
     click(0)
@@ -44,6 +76,16 @@ describe('focusOrAccumulateLegendClick', () => {
     expect(visibility).toEqual([false, true, false])
 
     click(1)
+    expect(visibility).toEqual([true, true, true])
+  })
+
+  it('uses the same focus and restore interaction for data-item legends', () => {
+    const { visibility, click } = createDataLegend(3)
+
+    click(1)
     expect(visibility).toEqual([false, true, false])
+
+    click(1)
+    expect(visibility).toEqual([true, true, true])
   })
 })

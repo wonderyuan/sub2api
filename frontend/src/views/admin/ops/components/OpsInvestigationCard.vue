@@ -38,7 +38,7 @@ function openFinding(finding: OpsInvestigationFinding) {
 </script>
 
 <template>
-  <section class="rounded-xl bg-white p-5 shadow-sm ring-1 ring-gray-900/5 dark:bg-dark-800 dark:ring-dark-700">
+  <section class="flex h-full max-h-[420px] flex-col overflow-hidden rounded-xl bg-white p-5 shadow-sm ring-1 ring-gray-900/5 dark:bg-dark-800 dark:ring-dark-700">
     <div class="mb-4 flex items-center justify-between gap-3">
       <div>
         <h3 class="text-sm font-bold text-gray-900 dark:text-white">{{ t('admin.ops.investigation.title') }}</h3>
@@ -51,7 +51,7 @@ function openFinding(finding: OpsInvestigationFinding) {
 
     <div v-if="loading && !data" class="py-8 text-center text-sm text-gray-400">{{ t('common.loading') }}</div>
     <EmptyState v-else-if="!hasData" :title="t('admin.ops.investigation.emptyTitle')" :description="t('admin.ops.investigation.emptyDescription')" />
-    <div v-else class="divide-y divide-gray-100 dark:divide-dark-700">
+    <div v-else class="min-h-0 flex-1 divide-y divide-gray-100 overflow-y-auto pr-1 dark:divide-dark-700">
       <button
         v-for="finding in findings"
         :key="`${finding.rule}-${finding.platform}-${finding.group_id}-${finding.status_code}`"

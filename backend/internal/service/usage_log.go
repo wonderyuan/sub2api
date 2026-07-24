@@ -165,8 +165,10 @@ type UsageLog struct {
 	FirstTokenMs *int
 	// RequestBodyBytes records the inbound request body size in bytes.
 	RequestBodyBytes int64
-	UserAgent        *string
-	IPAddress        *string
+	// RequestBodyLane snapshots the admission lane selected for this request.
+	RequestBodyLane RequestBodyLane
+	UserAgent       *string
+	IPAddress       *string
 
 	// Cache TTL Override 标记（管理员强制替换了缓存 TTL 计费）
 	CacheTTLOverridden bool

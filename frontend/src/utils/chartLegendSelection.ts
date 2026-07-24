@@ -17,6 +17,13 @@ function itemVisible(legend: LegendElement<ChartType>, item: LegendItem): boolea
   return false
 }
 
+function sameItem(left: LegendItem, right: LegendItem): boolean {
+  if (typeof left.datasetIndex === 'number' || typeof right.datasetIndex === 'number') {
+    return left.datasetIndex === right.datasetIndex
+  }
+  return typeof left.index === 'number' && left.index === right.index
+}
+
 function setItemVisible(
   legend: LegendElement<ChartType>,
   item: LegendItem,
@@ -32,8 +39,8 @@ function setItemVisible(
 }
 
 /**
- * First click focuses one series. Further clicks accumulate or remove series;
- * selecting every legend item naturally returns the chart to its all-visible state.
+ * First click focuses one series. Further clicks accumulate or remove series.
+ * Clicking the sole focused series again, or selecting every item, restores all.
  */
 export function focusOrAccumulateLegendClick(
   _event: ChartEvent,
@@ -45,7 +52,9 @@ export function focusOrAccumulateLegendClick(
 
   const visibleItems = items.filter((item) => itemVisible(legend, item))
   if (visibleItems.length === items.length) {
-    for (const item of items) setItemVisible(legend, item, item === clickedItem)
+    for (const item of items) setItemVisible(legend, item, sameItem(item, clickedItem))
+  } else if (visibleItems.length === 1 && itemVisible(legend, clickedItem)) {
+    for (const item of items) setItemVisible(legend, item, true)
   } else if (!itemVisible(legend, clickedItem)) {
     setItemVisible(legend, clickedItem, true)
   } else if (visibleItems.length > 1) {

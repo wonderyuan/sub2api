@@ -163,7 +163,18 @@ export type OpsRequestDetailsResponse = PaginatedResponse<OpsRequestDetail>
 
 export interface OpsLatencyHistogramBucket {
   range: string
+  min_ms: number
+  max_ms?: number | null
   count: number
+}
+
+export interface OpsLatencyUserSummary {
+  user_id: number
+  username: string
+  email: string
+  deleted: boolean
+  request_count: number
+  avg_duration_ms: number
 }
 
 export interface OpsLatencyHistogramResponse {
@@ -171,8 +182,12 @@ export interface OpsLatencyHistogramResponse {
   end_time: string
   platform: string
   group_id?: number | null
+  user_id?: number | null
 
   total_requests: number
+  avg_duration_ms?: number | null
+  top_avg_users: OpsLatencyUserSummary[]
+  available_users: OpsLatencyUserSummary[]
   buckets: OpsLatencyHistogramBucket[]
 }
 
@@ -201,6 +216,27 @@ export interface OpsErrorDistributionItem {
 export interface OpsErrorDistributionResponse {
   total: number
   items: OpsErrorDistributionItem[]
+}
+
+export interface OpsUserErrorTypeCount {
+  error_type: string
+  count: number
+}
+
+export interface OpsUserErrorDistributionItem {
+  user_id?: number | null
+  username: string
+  email: string
+  deleted: boolean
+  total: number
+  errors: OpsUserErrorTypeCount[]
+}
+
+export interface OpsUserErrorDistributionResponse {
+  total: number
+  total_users: number
+  user_limit: number
+  items: OpsUserErrorDistributionItem[]
 }
 
 export type OpsInvestigationSeverity = 'critical' | 'warning' | 'info'
@@ -391,6 +427,12 @@ export interface ConcurrencyLaneSnapshots {
   recovery: ConcurrencySnapshot
 }
 
+export interface RequestBodyLaneLatencySummaries {
+  normal: OpsPercentiles
+  heavy: OpsPercentiles
+  recovery: OpsPercentiles
+}
+
 export interface UserConcurrencyTrendPoint {
   bucket_start: string
   system: ConcurrencyPeak
@@ -413,6 +455,7 @@ export interface OpsUserConcurrencyTrendResponse {
   bucket: 'minute'
   current: ConcurrencySnapshot
   current_lanes?: ConcurrencyLaneSnapshots
+  latency_lanes?: RequestBodyLaneLatencySummaries
   points: UserConcurrencyTrendPoint[]
   users: Record<string, UserConcurrencyTrendUser>
   timestamp?: string
@@ -1106,11 +1149,30 @@ export async function getLatencyHistogram(
   end_time?: string
   platform?: string
   group_id?: number | null
+  user_id?: number | null
   mode?: OpsQueryMode
   },
   options: OpsRequestOptions = {}
 ): Promise<OpsLatencyHistogramResponse> {
   const { data } = await apiClient.get<OpsLatencyHistogramResponse>('/admin/ops/dashboard/latency-histogram', {
+    params,
+    signal: options.signal
+  })
+  return data
+}
+
+export async function getUserErrorDistribution(
+  params: {
+  time_range?: '5m' | '30m' | '1h' | '6h' | '24h'
+  start_time?: string
+  end_time?: string
+  platform?: string
+  group_id?: number | null
+  mode?: OpsQueryMode
+  },
+  options: OpsRequestOptions = {}
+): Promise<OpsUserErrorDistributionResponse> {
+  const { data } = await apiClient.get<OpsUserErrorDistributionResponse>('/admin/ops/dashboard/user-error-distribution', {
     params,
     signal: options.signal
   })
@@ -1209,6 +1271,7 @@ export type OpsErrorListQueryParams = {
   q?: string
   status_codes?: string
   status_codes_other?: string
+  error_types?: string
 
   // 服务端排序,列白名单见后端 opsErrorLogsOrderBy(created_at/model/status_code)
   sort_by?: string
@@ -1415,6 +1478,7 @@ export const opsAPI = {
   getLatencyHistogram,
   getErrorTrend,
   getErrorDistribution,
+  getUserErrorDistribution,
   getInvestigation,
   getOpenAITokenStats,
   getConcurrencyStats,

@@ -35,12 +35,13 @@ func TestUsageLogRepositoryCreateSyncRequestTypeAndLegacyFields(t *testing.T) {
 		BillingType:      service.BillingTypeBalance,
 		RequestType:      service.RequestTypeWSV2,
 		RequestBodyBytes: 4096,
+		RequestBodyLane:  service.RequestBodyLaneHeavy,
 		Stream:           false,
 		OpenAIWSMode:     false,
 		CreatedAt:        createdAt,
 	}
 
-	mock.ExpectQuery(`(?s)INSERT INTO usage_logs.*\$57`).
+	mock.ExpectQuery(`(?s)INSERT INTO usage_logs.*\$58`).
 		WithArgs(
 			log.UserID,
 			log.APIKeyID,
@@ -98,6 +99,7 @@ func TestUsageLogRepositoryCreateSyncRequestTypeAndLegacyFields(t *testing.T) {
 			sqlmock.AnyArg(), // billing_tier
 			sqlmock.AnyArg(), // billing_mode
 			sqlmock.AnyArg(), // account_stats_cost
+			sql.NullString{String: string(service.RequestBodyLaneHeavy), Valid: true},
 			createdAt,
 		).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(int64(99), createdAt))
@@ -188,6 +190,7 @@ func TestUsageLogRepositoryCreate_PersistsServiceTier(t *testing.T) {
 			sqlmock.AnyArg(), // billing_tier
 			sqlmock.AnyArg(), // billing_mode
 			sqlmock.AnyArg(), // account_stats_cost
+			sqlmock.AnyArg(), // request_body_lane
 			createdAt,
 		).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(int64(100), createdAt))
@@ -830,6 +833,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},
 			sql.NullString{},
 			sql.NullFloat64{},
+			sql.NullString{}, // request_body_lane
 			now,
 		}})
 		require.NoError(t, err)
@@ -906,6 +910,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},  // billing_tier
 			sql.NullString{},  // billing_mode
 			sql.NullFloat64{}, // account_stats_cost
+			sql.NullString{},  // request_body_lane
 			now,
 		}})
 		require.NoError(t, err)
@@ -964,6 +969,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},  // billing_tier
 			sql.NullString{},  // billing_mode
 			sql.NullFloat64{}, // account_stats_cost
+			sql.NullString{},  // request_body_lane
 			now,
 		}})
 		require.NoError(t, err)
@@ -1022,6 +1028,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},  // billing_tier
 			sql.NullString{},  // billing_mode
 			sql.NullFloat64{}, // account_stats_cost
+			sql.NullString{},  // request_body_lane
 			now,
 		}})
 		require.NoError(t, err)

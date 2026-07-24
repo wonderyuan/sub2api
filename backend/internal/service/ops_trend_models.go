@@ -64,3 +64,24 @@ type OpsErrorDistributionResponse struct {
 	Total int64                       `json:"total"`
 	Items []*OpsErrorDistributionItem `json:"items"`
 }
+
+type OpsUserErrorTypeCount struct {
+	ErrorType string `json:"error_type"`
+	Count     int64  `json:"count"`
+}
+
+type OpsUserErrorDistributionItem struct {
+	UserID   *int64                   `json:"user_id"`
+	Username string                   `json:"username"`
+	Email    string                   `json:"email"`
+	Deleted  bool                     `json:"deleted"`
+	Total    int64                    `json:"total"`
+	Errors   []*OpsUserErrorTypeCount `json:"errors"`
+}
+
+type OpsUserErrorDistributionResponse struct {
+	Total      int64                           `json:"total"`
+	TotalUsers int                             `json:"total_users"`
+	UserLimit  int                             `json:"user_limit"`
+	Items      []*OpsUserErrorDistributionItem `json:"items"`
+}

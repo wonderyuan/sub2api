@@ -153,7 +153,7 @@ func TestOrdinaryRequestAboveHeavyLimitUsesStableCode(t *testing.T) {
 	}}
 	streamStarted := false
 
-	_, admitted := (&OpenAIGatewayHandler{}).acquireResponsesRequestBodyLane(
+	_, _, admitted := (&OpenAIGatewayHandler{}).acquireResponsesRequestBodyLane(
 		c, nil, selection, 1, 31, false, false, &streamStarted, nil, nil,
 	)
 
@@ -181,7 +181,7 @@ func TestCompactRequestAboveRecoveryLimitUsesStableCode(t *testing.T) {
 	}}
 	streamStarted := false
 
-	_, admitted := (&OpenAIGatewayHandler{}).acquireResponsesRequestBodyLane(
+	_, _, admitted := (&OpenAIGatewayHandler{}).acquireResponsesRequestBodyLane(
 		c, nil, selection, 1, 31, true, false, &streamStarted, nil, nil,
 	)
 
@@ -212,11 +212,12 @@ func TestRequestBodyAdmissionQueueFullUsesRateLimitTypeAndStableCode(t *testing.
 	}}
 	streamStarted := false
 
-	_, admitted := h.acquireResponsesRequestBodyLane(
+	_, lane, admitted := h.acquireResponsesRequestBodyLane(
 		c, nil, selection, 1, 11, false, false, &streamStarted, nil, nil,
 	)
 
 	require.False(t, admitted)
+	require.Equal(t, service.RequestBodyLaneHeavy, lane)
 	require.Equal(t, http.StatusTooManyRequests, recorder.Code)
 	require.Equal(t, "rate_limit_error", gjson.GetBytes(recorder.Body.Bytes(), "error.type").String())
 	require.Equal(t, largeRequestQueueTimeoutCode, gjson.GetBytes(recorder.Body.Bytes(), "error.code").String())
@@ -247,11 +248,12 @@ func TestRequestBodyAdmissionUnavailableUsesAPIErrorTypeAndStableCode(t *testing
 	}}
 	streamStarted := false
 
-	_, admitted := h.acquireResponsesRequestBodyLane(
+	_, lane, admitted := h.acquireResponsesRequestBodyLane(
 		c, nil, selection, 1, 11, false, false, &streamStarted, nil, nil,
 	)
 
 	require.False(t, admitted)
+	require.Equal(t, service.RequestBodyLaneHeavy, lane)
 	require.Equal(t, http.StatusServiceUnavailable, recorder.Code)
 	require.Equal(t, "api_error", gjson.GetBytes(recorder.Body.Bytes(), "error.type").String())
 	require.Equal(t, requestBodyAdmissionUnavailableCode, gjson.GetBytes(recorder.Body.Bytes(), "error.code").String())

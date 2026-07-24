@@ -21,6 +21,10 @@ type opsUserTrendRepository interface {
 	ListOpsUsersByIDs(ctx context.Context, ids []int64) ([]User, error)
 }
 
+type opsRequestBodyLaneLatencyRepository interface {
+	GetRequestBodyLaneLatencySummaries(ctx context.Context, start, end time.Time) (RequestBodyLaneLatencySummaries, error)
+}
+
 func (s *OpsService) listAllAccountsForOps(ctx context.Context, platformFilter string, groupIDFilter *int64) ([]Account, error) {
 	if s == nil || s.accountRepo == nil {
 		return []Account{}, nil
@@ -505,6 +509,13 @@ func (s *OpsService) GetUserConcurrencyTrend(ctx context.Context) (*UserConcurre
 			}
 		}
 	}
+	latencyLanes := RequestBodyLaneLatencySummaries{}
+	if repo, ok := s.opsRepo.(opsRequestBodyLaneLatencyRepository); ok {
+		latencyLanes, err = repo.GetRequestBodyLaneLatencySummaries(ctx, trend.StartTime, now)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	return &UserConcurrencyTrendResponse{
 		StartTime:    trend.StartTime,
@@ -512,6 +523,7 @@ func (s *OpsService) GetUserConcurrencyTrend(ctx context.Context) (*UserConcurre
 		Bucket:       trend.Bucket,
 		Current:      current,
 		CurrentLanes: currentLanes,
+		LatencyLanes: latencyLanes,
 		Points:       trend.Points,
 		Users:        metadata,
 	}, nil

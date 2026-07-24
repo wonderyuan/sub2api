@@ -693,6 +693,26 @@ func (_u *UsageLogUpdate) AddRequestBodyBytes(v int64) *UsageLogUpdate {
 	return _u
 }
 
+// SetRequestBodyLane sets the "request_body_lane" field.
+func (_u *UsageLogUpdate) SetRequestBodyLane(v string) *UsageLogUpdate {
+	_u.mutation.SetRequestBodyLane(v)
+	return _u
+}
+
+// SetNillableRequestBodyLane sets the "request_body_lane" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillableRequestBodyLane(v *string) *UsageLogUpdate {
+	if v != nil {
+		_u.SetRequestBodyLane(*v)
+	}
+	return _u
+}
+
+// ClearRequestBodyLane clears the value of the "request_body_lane" field.
+func (_u *UsageLogUpdate) ClearRequestBodyLane() *UsageLogUpdate {
+	_u.mutation.ClearRequestBodyLane()
+	return _u
+}
+
 // SetUserAgent sets the "user_agent" field.
 func (_u *UsageLogUpdate) SetUserAgent(v string) *UsageLogUpdate {
 	_u.mutation.SetUserAgent(v)
@@ -1052,6 +1072,11 @@ func (_u *UsageLogUpdate) check() error {
 			return &ValidationError{Name: "billing_mode", err: fmt.Errorf(`ent: validator failed for field "UsageLog.billing_mode": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.RequestBodyLane(); ok {
+		if err := usagelog.RequestBodyLaneValidator(v); err != nil {
+			return &ValidationError{Name: "request_body_lane", err: fmt.Errorf(`ent: validator failed for field "UsageLog.request_body_lane": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.UserAgent(); ok {
 		if err := usagelog.UserAgentValidator(v); err != nil {
 			return &ValidationError{Name: "user_agent", err: fmt.Errorf(`ent: validator failed for field "UsageLog.user_agent": %w`, err)}
@@ -1278,6 +1303,12 @@ func (_u *UsageLogUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.AddedRequestBodyBytes(); ok {
 		_spec.AddField(usagelog.FieldRequestBodyBytes, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.RequestBodyLane(); ok {
+		_spec.SetField(usagelog.FieldRequestBodyLane, field.TypeString, value)
+	}
+	if _u.mutation.RequestBodyLaneCleared() {
+		_spec.ClearField(usagelog.FieldRequestBodyLane, field.TypeString)
 	}
 	if value, ok := _u.mutation.UserAgent(); ok {
 		_spec.SetField(usagelog.FieldUserAgent, field.TypeString, value)
@@ -2177,6 +2208,26 @@ func (_u *UsageLogUpdateOne) AddRequestBodyBytes(v int64) *UsageLogUpdateOne {
 	return _u
 }
 
+// SetRequestBodyLane sets the "request_body_lane" field.
+func (_u *UsageLogUpdateOne) SetRequestBodyLane(v string) *UsageLogUpdateOne {
+	_u.mutation.SetRequestBodyLane(v)
+	return _u
+}
+
+// SetNillableRequestBodyLane sets the "request_body_lane" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillableRequestBodyLane(v *string) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetRequestBodyLane(*v)
+	}
+	return _u
+}
+
+// ClearRequestBodyLane clears the value of the "request_body_lane" field.
+func (_u *UsageLogUpdateOne) ClearRequestBodyLane() *UsageLogUpdateOne {
+	_u.mutation.ClearRequestBodyLane()
+	return _u
+}
+
 // SetUserAgent sets the "user_agent" field.
 func (_u *UsageLogUpdateOne) SetUserAgent(v string) *UsageLogUpdateOne {
 	_u.mutation.SetUserAgent(v)
@@ -2549,6 +2600,11 @@ func (_u *UsageLogUpdateOne) check() error {
 			return &ValidationError{Name: "billing_mode", err: fmt.Errorf(`ent: validator failed for field "UsageLog.billing_mode": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.RequestBodyLane(); ok {
+		if err := usagelog.RequestBodyLaneValidator(v); err != nil {
+			return &ValidationError{Name: "request_body_lane", err: fmt.Errorf(`ent: validator failed for field "UsageLog.request_body_lane": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.UserAgent(); ok {
 		if err := usagelog.UserAgentValidator(v); err != nil {
 			return &ValidationError{Name: "user_agent", err: fmt.Errorf(`ent: validator failed for field "UsageLog.user_agent": %w`, err)}
@@ -2792,6 +2848,12 @@ func (_u *UsageLogUpdateOne) sqlSave(ctx context.Context) (_node *UsageLog, err 
 	}
 	if value, ok := _u.mutation.AddedRequestBodyBytes(); ok {
 		_spec.AddField(usagelog.FieldRequestBodyBytes, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.RequestBodyLane(); ok {
+		_spec.SetField(usagelog.FieldRequestBodyLane, field.TypeString, value)
+	}
+	if _u.mutation.RequestBodyLaneCleared() {
+		_spec.ClearField(usagelog.FieldRequestBodyLane, field.TypeString)
 	}
 	if value, ok := _u.mutation.UserAgent(); ok {
 		_spec.SetField(usagelog.FieldUserAgent, field.TypeString, value)

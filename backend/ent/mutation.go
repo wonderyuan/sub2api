@@ -43117,6 +43117,7 @@ type UsageLogMutation struct {
 	addfirst_token_ms            *int
 	request_body_bytes           *int64
 	addrequest_body_bytes        *int64
+	request_body_lane            *string
 	user_agent                   *string
 	ip_address                   *string
 	image_count                  *int
@@ -44962,6 +44963,55 @@ func (m *UsageLogMutation) ResetRequestBodyBytes() {
 	m.addrequest_body_bytes = nil
 }
 
+// SetRequestBodyLane sets the "request_body_lane" field.
+func (m *UsageLogMutation) SetRequestBodyLane(s string) {
+	m.request_body_lane = &s
+}
+
+// RequestBodyLane returns the value of the "request_body_lane" field in the mutation.
+func (m *UsageLogMutation) RequestBodyLane() (r string, exists bool) {
+	v := m.request_body_lane
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRequestBodyLane returns the old "request_body_lane" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldRequestBodyLane(ctx context.Context) (v *string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRequestBodyLane is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRequestBodyLane requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRequestBodyLane: %w", err)
+	}
+	return oldValue.RequestBodyLane, nil
+}
+
+// ClearRequestBodyLane clears the value of the "request_body_lane" field.
+func (m *UsageLogMutation) ClearRequestBodyLane() {
+	m.request_body_lane = nil
+	m.clearedFields[usagelog.FieldRequestBodyLane] = struct{}{}
+}
+
+// RequestBodyLaneCleared returns if the "request_body_lane" field was cleared in this mutation.
+func (m *UsageLogMutation) RequestBodyLaneCleared() bool {
+	_, ok := m.clearedFields[usagelog.FieldRequestBodyLane]
+	return ok
+}
+
+// ResetRequestBodyLane resets all changes to the "request_body_lane" field.
+func (m *UsageLogMutation) ResetRequestBodyLane() {
+	m.request_body_lane = nil
+	delete(m.clearedFields, usagelog.FieldRequestBodyLane)
+}
+
 // SetUserAgent sets the "user_agent" field.
 func (m *UsageLogMutation) SetUserAgent(s string) {
 	m.user_agent = &s
@@ -45777,7 +45827,7 @@ func (m *UsageLogMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *UsageLogMutation) Fields() []string {
-	fields := make([]string, 0, 46)
+	fields := make([]string, 0, 47)
 	if m.user != nil {
 		fields = append(fields, usagelog.FieldUserID)
 	}
@@ -45876,6 +45926,9 @@ func (m *UsageLogMutation) Fields() []string {
 	}
 	if m.request_body_bytes != nil {
 		fields = append(fields, usagelog.FieldRequestBodyBytes)
+	}
+	if m.request_body_lane != nil {
+		fields = append(fields, usagelog.FieldRequestBodyLane)
 	}
 	if m.user_agent != nil {
 		fields = append(fields, usagelog.FieldUserAgent)
@@ -45990,6 +46043,8 @@ func (m *UsageLogMutation) Field(name string) (ent.Value, bool) {
 		return m.FirstTokenMs()
 	case usagelog.FieldRequestBodyBytes:
 		return m.RequestBodyBytes()
+	case usagelog.FieldRequestBodyLane:
+		return m.RequestBodyLane()
 	case usagelog.FieldUserAgent:
 		return m.UserAgent()
 	case usagelog.FieldIPAddress:
@@ -46091,6 +46146,8 @@ func (m *UsageLogMutation) OldField(ctx context.Context, name string) (ent.Value
 		return m.OldFirstTokenMs(ctx)
 	case usagelog.FieldRequestBodyBytes:
 		return m.OldRequestBodyBytes(ctx)
+	case usagelog.FieldRequestBodyLane:
+		return m.OldRequestBodyLane(ctx)
 	case usagelog.FieldUserAgent:
 		return m.OldUserAgent(ctx)
 	case usagelog.FieldIPAddress:
@@ -46356,6 +46413,13 @@ func (m *UsageLogMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetRequestBodyBytes(v)
+		return nil
+	case usagelog.FieldRequestBodyLane:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRequestBodyLane(v)
 		return nil
 	case usagelog.FieldUserAgent:
 		v, ok := value.(string)
@@ -46778,6 +46842,9 @@ func (m *UsageLogMutation) ClearedFields() []string {
 	if m.FieldCleared(usagelog.FieldFirstTokenMs) {
 		fields = append(fields, usagelog.FieldFirstTokenMs)
 	}
+	if m.FieldCleared(usagelog.FieldRequestBodyLane) {
+		fields = append(fields, usagelog.FieldRequestBodyLane)
+	}
 	if m.FieldCleared(usagelog.FieldUserAgent) {
 		fields = append(fields, usagelog.FieldUserAgent)
 	}
@@ -46851,6 +46918,9 @@ func (m *UsageLogMutation) ClearField(name string) error {
 		return nil
 	case usagelog.FieldFirstTokenMs:
 		m.ClearFirstTokenMs()
+		return nil
+	case usagelog.FieldRequestBodyLane:
+		m.ClearRequestBodyLane()
 		return nil
 	case usagelog.FieldUserAgent:
 		m.ClearUserAgent()
@@ -46985,6 +47055,9 @@ func (m *UsageLogMutation) ResetField(name string) error {
 		return nil
 	case usagelog.FieldRequestBodyBytes:
 		m.ResetRequestBodyBytes()
+		return nil
+	case usagelog.FieldRequestBodyLane:
+		m.ResetRequestBodyLane()
 		return nil
 	case usagelog.FieldUserAgent:
 		m.ResetUserAgent()

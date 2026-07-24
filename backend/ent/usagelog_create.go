@@ -449,6 +449,20 @@ func (_c *UsageLogCreate) SetNillableRequestBodyBytes(v *int64) *UsageLogCreate 
 	return _c
 }
 
+// SetRequestBodyLane sets the "request_body_lane" field.
+func (_c *UsageLogCreate) SetRequestBodyLane(v string) *UsageLogCreate {
+	_c.mutation.SetRequestBodyLane(v)
+	return _c
+}
+
+// SetNillableRequestBodyLane sets the "request_body_lane" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableRequestBodyLane(v *string) *UsageLogCreate {
+	if v != nil {
+		_c.SetRequestBodyLane(*v)
+	}
+	return _c
+}
+
 // SetUserAgent sets the "user_agent" field.
 func (_c *UsageLogCreate) SetUserAgent(v string) *UsageLogCreate {
 	_c.mutation.SetUserAgent(v)
@@ -872,6 +886,11 @@ func (_c *UsageLogCreate) check() error {
 	if _, ok := _c.mutation.RequestBodyBytes(); !ok {
 		return &ValidationError{Name: "request_body_bytes", err: errors.New(`ent: missing required field "UsageLog.request_body_bytes"`)}
 	}
+	if v, ok := _c.mutation.RequestBodyLane(); ok {
+		if err := usagelog.RequestBodyLaneValidator(v); err != nil {
+			return &ValidationError{Name: "request_body_lane", err: fmt.Errorf(`ent: validator failed for field "UsageLog.request_body_lane": %w`, err)}
+		}
+	}
 	if v, ok := _c.mutation.UserAgent(); ok {
 		if err := usagelog.UserAgentValidator(v); err != nil {
 			return &ValidationError{Name: "user_agent", err: fmt.Errorf(`ent: validator failed for field "UsageLog.user_agent": %w`, err)}
@@ -1066,6 +1085,10 @@ func (_c *UsageLogCreate) createSpec() (*UsageLog, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.RequestBodyBytes(); ok {
 		_spec.SetField(usagelog.FieldRequestBodyBytes, field.TypeInt64, value)
 		_node.RequestBodyBytes = value
+	}
+	if value, ok := _c.mutation.RequestBodyLane(); ok {
+		_spec.SetField(usagelog.FieldRequestBodyLane, field.TypeString, value)
+		_node.RequestBodyLane = &value
 	}
 	if value, ok := _c.mutation.UserAgent(); ok {
 		_spec.SetField(usagelog.FieldUserAgent, field.TypeString, value)
@@ -1829,6 +1852,24 @@ func (u *UsageLogUpsert) UpdateRequestBodyBytes() *UsageLogUpsert {
 // AddRequestBodyBytes adds v to the "request_body_bytes" field.
 func (u *UsageLogUpsert) AddRequestBodyBytes(v int64) *UsageLogUpsert {
 	u.Add(usagelog.FieldRequestBodyBytes, v)
+	return u
+}
+
+// SetRequestBodyLane sets the "request_body_lane" field.
+func (u *UsageLogUpsert) SetRequestBodyLane(v string) *UsageLogUpsert {
+	u.Set(usagelog.FieldRequestBodyLane, v)
+	return u
+}
+
+// UpdateRequestBodyLane sets the "request_body_lane" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateRequestBodyLane() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldRequestBodyLane)
+	return u
+}
+
+// ClearRequestBodyLane clears the value of the "request_body_lane" field.
+func (u *UsageLogUpsert) ClearRequestBodyLane() *UsageLogUpsert {
+	u.SetNull(usagelog.FieldRequestBodyLane)
 	return u
 }
 
@@ -2762,6 +2803,27 @@ func (u *UsageLogUpsertOne) AddRequestBodyBytes(v int64) *UsageLogUpsertOne {
 func (u *UsageLogUpsertOne) UpdateRequestBodyBytes() *UsageLogUpsertOne {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.UpdateRequestBodyBytes()
+	})
+}
+
+// SetRequestBodyLane sets the "request_body_lane" field.
+func (u *UsageLogUpsertOne) SetRequestBodyLane(v string) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetRequestBodyLane(v)
+	})
+}
+
+// UpdateRequestBodyLane sets the "request_body_lane" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateRequestBodyLane() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateRequestBodyLane()
+	})
+}
+
+// ClearRequestBodyLane clears the value of the "request_body_lane" field.
+func (u *UsageLogUpsertOne) ClearRequestBodyLane() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearRequestBodyLane()
 	})
 }
 
@@ -3897,6 +3959,27 @@ func (u *UsageLogUpsertBulk) AddRequestBodyBytes(v int64) *UsageLogUpsertBulk {
 func (u *UsageLogUpsertBulk) UpdateRequestBodyBytes() *UsageLogUpsertBulk {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.UpdateRequestBodyBytes()
+	})
+}
+
+// SetRequestBodyLane sets the "request_body_lane" field.
+func (u *UsageLogUpsertBulk) SetRequestBodyLane(v string) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetRequestBodyLane(v)
+	})
+}
+
+// UpdateRequestBodyLane sets the "request_body_lane" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateRequestBodyLane() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateRequestBodyLane()
+	})
+}
+
+// ClearRequestBodyLane clears the value of the "request_body_lane" field.
+func (u *UsageLogUpsertBulk) ClearRequestBodyLane() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearRequestBodyLane()
 	})
 }
 
