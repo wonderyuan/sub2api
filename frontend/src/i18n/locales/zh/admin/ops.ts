@@ -116,6 +116,7 @@ export default {
       failedToLoadData: '加载运维数据失败',
       failedToLoadOverview: '加载概览数据失败',
       failedToLoadThroughputTrend: '加载吞吐趋势失败',
+      failedToLoadLatencyTrend: '加载服务请求响应时间趋势失败',
       failedToLoadSwitchTrend: '加载平均账号切换趋势失败',
       failedToLoadLatencyHistogram: '加载请求时长分布失败',
       failedToLoadErrorTrend: '加载错误趋势失败',
@@ -127,6 +128,7 @@ export default {
       tpsK: 'TPS（千）',
       top: '最高：',
       throughputTrend: '吞吐趋势',
+      responseTimeTrend: '服务请求响应时间',
       switchRateTrend: '平均账号切换趋势',
       latencyHistogram: '请求时长分布',
       errorTrend: '错误趋势',
@@ -847,6 +849,7 @@ export default {
       tooltips: {
         totalRequests: '当前时间窗口内的总请求数和Token消耗量。',
         throughputTrend: '当前窗口内的请求/QPS 与 token/TPS 趋势。',
+        responseTimeTrend: '当前所选时段内成功服务请求响应时间的 P95、P90、P50、平均值和最大值变化。',
         switchRateTrend: '近5小时内账号切换次数 / 请求总数的趋势（平均切换次数）。',
         latencyHistogram: '成功请求的请求时长分布（毫秒）。',
         userLatency: '按用户查看成功请求的完整请求时长。分桶根据当前所选用户的真实 p95 动态调整，极端长尾单独归档。',

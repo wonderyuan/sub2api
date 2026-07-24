@@ -147,6 +147,7 @@ func (h *OpsHandler) GetUserConcurrencyTrend(c *gin.Context) {
 		"bucket":        trend.Bucket,
 		"current":       trend.Current,
 		"current_lanes": trend.CurrentLanes,
+		"latency_lanes": trend.LatencyLanes,
 		"points":        trend.Points,
 		"users":         trend.Users,
 		"timestamp":     time.Now().UTC(),

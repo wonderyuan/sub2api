@@ -105,6 +105,16 @@ export interface OpsThroughputTrendResponse {
   top_groups?: OpsThroughputGroupBreakdownItem[]
 }
 
+export interface OpsLatencyTrendPoint extends OpsPercentiles {
+  bucket_start: string
+  sample_count: number
+}
+
+export interface OpsLatencyTrendResponse {
+  bucket: string
+  points: OpsLatencyTrendPoint[]
+}
+
 export type OpsRequestKind = 'success' | 'error'
 export type OpsRequestDetailsKind = OpsRequestKind | 'all'
 export type OpsRequestDetailsSort = 'created_at_desc' | 'duration_desc'
@@ -1142,6 +1152,24 @@ export async function getThroughputTrend(
   return data
 }
 
+export async function getLatencyTrend(
+  params: {
+  time_range?: '5m' | '30m' | '1h' | '6h' | '24h'
+  start_time?: string
+  end_time?: string
+  platform?: string
+  group_id?: number | null
+  mode?: OpsQueryMode
+  },
+  options: OpsRequestOptions = {}
+): Promise<OpsLatencyTrendResponse> {
+  const { data } = await apiClient.get<OpsLatencyTrendResponse>('/admin/ops/dashboard/latency-trend', {
+    params,
+    signal: options.signal
+  })
+  return data
+}
+
 export async function getLatencyHistogram(
   params: {
   time_range?: '5m' | '30m' | '1h' | '6h' | '24h'
@@ -1475,6 +1503,7 @@ export const opsAPI = {
   getDashboardSnapshotV2,
   getDashboardOverview,
   getThroughputTrend,
+  getLatencyTrend,
   getLatencyHistogram,
   getErrorTrend,
   getErrorDistribution,

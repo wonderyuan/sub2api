@@ -36,6 +36,21 @@ type OpsThroughputTrendResponse struct {
 	TopGroups  []*OpsThroughputGroupBreakdownItem    `json:"top_groups,omitempty"`
 }
 
+type OpsLatencyTrendPoint struct {
+	BucketStart time.Time `json:"bucket_start"`
+	P50         *int      `json:"p50_ms"`
+	P90         *int      `json:"p90_ms"`
+	P95         *int      `json:"p95_ms"`
+	Avg         *int      `json:"avg_ms"`
+	Max         *int      `json:"max_ms"`
+	SampleCount int64     `json:"sample_count"`
+}
+
+type OpsLatencyTrendResponse struct {
+	Bucket string                  `json:"bucket"`
+	Points []*OpsLatencyTrendPoint `json:"points"`
+}
+
 type OpsErrorTrendPoint struct {
 	BucketStart time.Time `json:"bucket_start"`
 

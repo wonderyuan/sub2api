@@ -116,6 +116,7 @@ export default {
       failedToLoadData: 'Failed to load ops data.',
       failedToLoadOverview: 'Failed to load overview',
       failedToLoadThroughputTrend: 'Failed to load throughput trend',
+      failedToLoadLatencyTrend: 'Failed to load service response time trend',
       failedToLoadSwitchTrend: 'Failed to load avg account switches trend',
       failedToLoadLatencyHistogram: 'Failed to load request duration histogram',
       failedToLoadErrorTrend: 'Failed to load error trend',
@@ -127,6 +128,7 @@ export default {
       tpsK: 'TPS (K)',
       top: 'Top:',
       throughputTrend: 'Throughput Trend',
+      responseTimeTrend: 'Service Response Time',
       switchRateTrend: 'Avg Account Switches',
       latencyHistogram: 'Request Duration Histogram',
       errorTrend: 'Error Trend',
@@ -846,6 +848,7 @@ export default {
       tooltips: {
         totalRequests: 'Total number of requests (including both successful and failed requests) in the selected time window.',
         throughputTrend: 'Requests/QPS + Tokens/TPS in the selected window.',
+        responseTimeTrend: 'P95, P90, P50, average, and maximum successful service-request duration over the selected window.',
         switchRateTrend: 'Trend of account switches / total requests over the last 5 hours (avg switches).',
         latencyHistogram: 'Request duration distribution (ms) for successful requests.',
         userLatency: "Full successful-request duration by user. Buckets adapt to the selected user's actual p95, with extreme tail requests isolated.",

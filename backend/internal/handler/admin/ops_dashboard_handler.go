@@ -95,6 +95,46 @@ func (h *OpsHandler) GetDashboardThroughputTrend(c *gin.Context) {
 	response.Success(c, data)
 }
 
+// GetDashboardLatencyTrend returns successful-request duration percentiles over time.
+// GET /api/v1/admin/ops/dashboard/latency-trend
+func (h *OpsHandler) GetDashboardLatencyTrend(c *gin.Context) {
+	if h.opsService == nil {
+		response.Error(c, http.StatusServiceUnavailable, "Ops service not available")
+		return
+	}
+	if err := h.opsService.RequireMonitoringEnabled(c.Request.Context()); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	startTime, endTime, err := parseOpsTimeRange(c, "1h")
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	filter := &service.OpsDashboardFilter{
+		StartTime: startTime,
+		EndTime:   endTime,
+		Platform:  strings.TrimSpace(c.Query("platform")),
+		QueryMode: parseOpsQueryMode(c),
+	}
+	if v := strings.TrimSpace(c.Query("group_id")); v != "" {
+		id, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || id <= 0 {
+			response.BadRequest(c, "Invalid group_id")
+			return
+		}
+		filter.GroupID = &id
+	}
+
+	data, err := h.opsService.GetLatencyTrend(c.Request.Context(), filter, pickThroughputBucketSeconds(endTime.Sub(startTime)))
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, data)
+}
+
 // GetDashboardLatencyHistogram returns the latency distribution histogram (success requests).
 // GET /api/v1/admin/ops/dashboard/latency-histogram
 func (h *OpsHandler) GetDashboardLatencyHistogram(c *gin.Context) {

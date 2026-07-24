@@ -105,7 +105,7 @@
         />
       </div>
 
-      <!-- Row: Investigation + user error distribution -->
+      <!-- Row: Investigation + user error distribution + response time trend -->
       <div v-if="opsEnabled && !(loading && !hasLoadedOnce)" class="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div class="min-h-[360px] lg:col-span-1">
           <OpsInvestigationCard
@@ -115,11 +115,18 @@
             @open-error-details="openErrorDetails"
           />
         </div>
-        <div class="min-h-[360px] lg:col-span-2">
+        <div class="min-h-[360px] lg:col-span-1">
           <OpsUserErrorDistributionChart
             :data="userErrorDistribution"
             :loading="loadingUserErrorDistribution"
             @open-details="handleUserErrorDetails"
+          />
+        </div>
+        <div class="min-h-[360px] lg:col-span-1">
+          <OpsResponseTimeTrendChart
+            :points="latencyTrend?.points ?? []"
+            :loading="loadingLatencyTrend"
+            :time-range="timeRange"
           />
         </div>
       </div>
@@ -182,6 +189,7 @@ import {
   type OpsErrorTrendResponse,
   type OpsInvestigationResponse,
   type OpsLatencyHistogramResponse,
+  type OpsLatencyTrendResponse,
   type OpsUserErrorDistributionResponse,
   type OpsThroughputTrendResponse,
   type OpsMetricThresholds
@@ -197,6 +205,7 @@ import OpsInvestigationCard from './components/OpsInvestigationCard.vue'
 import OpsErrorDetailsModal from './components/OpsErrorDetailsModal.vue'
 import OpsErrorTrendChart from './components/OpsErrorTrendChart.vue'
 import OpsLatencyChart from './components/OpsLatencyChart.vue'
+import OpsResponseTimeTrendChart from './components/OpsResponseTimeTrendChart.vue'
 import OpsUserErrorDistributionChart from './components/OpsUserErrorDistributionChart.vue'
 import OpsThroughputTrendChart from './components/OpsThroughputTrendChart.vue'
 import OpsSwitchRateTrendChart from './components/OpsSwitchRateTrendChart.vue'
@@ -394,6 +403,9 @@ const latencyHistogram = ref<OpsLatencyHistogramResponse | null>(null)
 const loadingLatency = ref(false)
 const selectedLatencyUserId = ref<number | null>(null)
 let latencyRequestSeq = 0
+
+const latencyTrend = ref<OpsLatencyTrendResponse | null>(null)
+const loadingLatencyTrend = ref(false)
 
 const errorTrend = ref<OpsErrorTrendResponse | null>(null)
 const loadingErrorTrend = ref(false)
@@ -706,6 +718,22 @@ async function refreshLatencyHistogramWithCancel(fetchSeq: number, signal: Abort
   }
 }
 
+async function refreshLatencyTrendWithCancel(fetchSeq: number, signal: AbortSignal) {
+  if (!opsEnabled.value) return
+  loadingLatencyTrend.value = true
+  try {
+    const data = await opsAPI.getLatencyTrend(buildApiParams(), { signal })
+    if (fetchSeq !== dashboardFetchSeq) return
+    latencyTrend.value = data
+  } catch (err: any) {
+    if (fetchSeq !== dashboardFetchSeq || isCanceledRequest(err)) return
+    latencyTrend.value = null
+    appStore.showError(err?.message || t('admin.ops.failedToLoadLatencyTrend'))
+  } finally {
+    if (fetchSeq === dashboardFetchSeq) loadingLatencyTrend.value = false
+  }
+}
+
 async function refreshErrorTrendWithCancel(fetchSeq: number, signal: AbortSignal) {
   if (!opsEnabled.value) return
   loadingErrorTrend.value = true
@@ -780,6 +808,7 @@ async function refreshDeferredPanels(fetchSeq: number, signal: AbortSignal) {
   if (!opsEnabled.value) return
   await Promise.all([
     refreshLatencyHistogramWithCancel(fetchSeq, signal),
+    refreshLatencyTrendWithCancel(fetchSeq, signal),
     refreshErrorDistributionWithCancel(fetchSeq, signal),
     refreshUserErrorDistributionWithCancel(fetchSeq, signal),
     refreshInvestigationWithCancel(fetchSeq, signal)
