@@ -789,6 +789,7 @@ export default {
         currentDemand: 'Current demand',
         currentActive: 'Active',
         currentWaiting: 'Queued',
+        statistics: 'peak demand statistics',
         selectUser: 'Select user series',
         removeUser: 'Remove user series',
         axis: 'Concurrent requests',

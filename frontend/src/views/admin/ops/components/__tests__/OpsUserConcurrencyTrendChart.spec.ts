@@ -102,6 +102,16 @@ describe('OpsUserConcurrencyTrendChart', () => {
     expect(charts[1].props('data').datasets[1].data).toEqual([1])
     expect(charts[2].props('data').datasets[0].data).toEqual([1])
 
+    const normalLane = wrapper.find('[data-lane="normal"]')
+    expect(normalLane.find('[data-stat="p95"]').text()).toContain('5')
+    expect(normalLane.find('[data-stat="p90"]').text()).toContain('5')
+    expect(normalLane.find('[data-stat="p50"]').text()).toContain('5')
+    expect(normalLane.find('[data-stat="avg"]').text()).toContain('5')
+    expect(normalLane.find('[data-stat="max"]').text()).toContain('5')
+
+    expect(wrapper.find('[data-lane="heavy"] [data-stat="avg"]').text()).toContain('3')
+    expect(wrapper.find('[data-lane="recovery"] [data-stat="max"]').text()).toContain('1')
+
     await wrapper.find('select').setValue('6')
     expect(wrapper.findAll('button').some(button => button.text().includes('zeta'))).toBe(true)
   })

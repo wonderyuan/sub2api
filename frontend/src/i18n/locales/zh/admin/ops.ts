@@ -790,6 +790,7 @@ export default {
         currentDemand: '当前需求',
         currentActive: '占用',
         currentWaiting: '排队',
+        statistics: '需求峰值统计',
         selectUser: '选择用户曲线',
         removeUser: '移除用户曲线',
         axis: '并发请求数',

@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Chart as ChartJS, CategoryScale, Legend, LineElement, LinearScale, PointElement, Tooltip } from 'chart.js'
 import { Line } from 'vue-chartjs'
+import { summarizeNumbers, type NumberSummary } from '@/utils/numberSummary'
 import {
   opsAPI,
   type ConcurrencyPeak,
@@ -122,6 +123,30 @@ function currentLane(lane: LaneKey): ConcurrencySnapshot {
 
 function hasLaneData(lane: LaneKey): boolean {
   return (trend.value?.points || []).some(point => (pointSystemLanePeak(point, lane)?.peak_demand || 0) > 0)
+}
+
+function summarizeLane(lane: LaneKey): NumberSummary {
+  return summarizeNumbers(
+    (trend.value?.points || []).map(point => pointSystemLanePeak(point, lane)?.peak_demand || 0)
+  )
+}
+
+const laneStatistics = computed<Record<LaneKey, NumberSummary>>(() => ({
+  normal: summarizeLane('normal'),
+  heavy: summarizeLane('heavy'),
+  recovery: summarizeLane('recovery')
+}))
+
+const statisticDefinitions: Array<{ key: keyof NumberSummary; label: string }> = [
+  { key: 'p95', label: 'P95' },
+  { key: 'p90', label: 'P90' },
+  { key: 'p50', label: 'P50' },
+  { key: 'avg', label: 'Avg' },
+  { key: 'max', label: 'Max' }
+]
+
+function formatStatistic(value: number): string {
+  return new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(value)
 }
 
 function laneChartData(lane: LaneDefinition) {
@@ -321,6 +346,24 @@ onMounted(loadData)
           <div class="flex items-center gap-2 text-[10px] text-gray-500 dark:text-gray-400">
             <span>{{ t('admin.ops.concurrencyTrend.currentActive') }} <strong class="font-mono" :style="{ color: lane.color }">{{ currentLane(lane.key).in_use }}</strong></span>
             <span>{{ t('admin.ops.concurrencyTrend.currentWaiting') }} <strong class="font-mono text-red-600 dark:text-red-400">{{ currentLane(lane.key).waiting }}</strong></span>
+          </div>
+        </div>
+        <div
+          class="mb-3 grid grid-cols-5 border-y border-gray-100 py-2 dark:border-dark-700"
+          :aria-label="`${lane.title} ${t('admin.ops.concurrencyTrend.statistics')}`"
+        >
+          <div
+            v-for="statistic in statisticDefinitions"
+            :key="statistic.key"
+            class="min-w-0 text-center"
+            :data-stat="statistic.key"
+          >
+            <div class="text-[9px] font-semibold uppercase text-gray-400 dark:text-gray-500">
+              {{ statistic.label }}
+            </div>
+            <div class="truncate font-mono text-xs font-semibold text-gray-800 dark:text-gray-100">
+              {{ formatStatistic(laneStatistics[lane.key][statistic.key]) }}
+            </div>
           </div>
         </div>
         <div class="h-[300px] min-h-0">
