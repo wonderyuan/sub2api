@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	pkghttputil "github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
@@ -14,6 +15,7 @@ import (
 
 const (
 	requestBodyRecoveryLimitExceededCode = "request_body_recovery_limit_exceeded"
+	requestBodyHeavyLimitExceededCode    = "request_body_heavy_limit_exceeded"
 	requestBodyAdmissionUnavailableCode  = "request_body_admission_unavailable"
 	largeRequestQueueTimeoutCode         = "large_request_queue_timeout"
 )
@@ -103,13 +105,16 @@ func (h *OpenAIGatewayHandler) acquireResponsesRequestBodyLane(
 
 	if lane == service.RequestBodyLaneRejected {
 		releaseAcquiredAccountSelection(selection)
-		message := fmt.Sprintf(
-			"Request body is %d bytes and exceeds the configured recovery limit of %d bytes; reduce the request or raise the recovery channel limit",
-			bodyBytes,
-			policy.RecoveryLimitBytes,
-		)
+		code := requestBodyRecoveryLimitExceededCode
+		limit := policy.RecoveryLimitBytes
+		message := fmt.Sprintf("Compact request body is %d bytes and exceeds the configured recovery limit of %d bytes", bodyBytes, limit)
+		if !compactRequest {
+			code = requestBodyHeavyLimitExceededCode
+			limit = policy.HeavyLimitBytes
+			message = fmt.Sprintf("Ordinary request body is %d bytes and exceeds the heavy request limit of %d bytes; compact the conversation before retrying", bodyBytes, limit)
+		}
 		h.handleStreamingAwareErrorWithCode(
-			c, http.StatusRequestEntityTooLarge, "invalid_request_error", requestBodyRecoveryLimitExceededCode, message, *streamStarted, false,
+			c, http.StatusRequestEntityTooLarge, "invalid_request_error", code, message, *streamStarted, false,
 		)
 		return nil, false
 	}
@@ -143,6 +148,7 @@ func (h *OpenAIGatewayHandler) acquireResponsesRequestBodyLane(
 	// The scheduler may have optimistically reserved an account slot. Large
 	// requests must release it before waiting so ordinary traffic stays isolated.
 	releaseSelectionForRequestBodyLaneWait(selection)
+	waitStartedAt := time.Now()
 	release, err = h.concurrencyHelper.AcquireRequestBodyLaneWithWait(
 		c, lane, scopeID, userID, maxPermits, service.RequestBodyLaneWaitLimit(maxPermits), 1, isStream, streamStarted,
 	)
@@ -152,6 +158,7 @@ func (h *OpenAIGatewayHandler) acquireResponsesRequestBodyLane(
 				zap.Int64("account_id", account.ID),
 				zap.Int64("user_id", userID),
 				zap.String("request_body_lane", string(lane)),
+				zap.Int64("wait_ms", time.Since(waitStartedAt).Milliseconds()),
 				zap.Error(err),
 			)
 		}
@@ -172,6 +179,14 @@ func (h *OpenAIGatewayHandler) acquireResponsesRequestBodyLane(
 		)
 		return nil, false
 	}
+	if reqLog != nil {
+		reqLog.Info("openai.request_body_lane_wait_succeeded",
+			zap.Int64("account_id", account.ID),
+			zap.Int64("user_id", userID),
+			zap.String("request_body_lane", string(lane)),
+			zap.Int64("wait_ms", time.Since(waitStartedAt).Milliseconds()),
+		)
+	}
 	return wrapReleaseOnDone(c.Request.Context(), release), true
 }
 
@@ -189,6 +204,19 @@ func buildBodyTooLargeMessage(limit int64) string {
 
 func readLenientJSONRequestBodyWithPrealloc(req *http.Request, cfg *config.Config) ([]byte, error) {
 	return pkghttputil.ReadLenientJSONRequestBodyWithPrealloc(req, gatewayMaxBodySize(cfg))
+}
+
+func readOpenAIResponsesRequestBodyWithPrealloc(req *http.Request, cfg *config.Config) ([]byte, error) {
+	limit := service.MaxRequestBodyRecoveryLimitBytes
+	if cfg != nil {
+		if configured := cfg.Gateway.TextMaxBodySize; configured > 0 && configured < limit {
+			limit = configured
+		}
+		if configured := cfg.Gateway.MaxBodySize; configured > 0 && configured < limit {
+			limit = configured
+		}
+	}
+	return pkghttputil.ReadLenientJSONRequestBodyWithPrealloc(req, limit)
 }
 
 func gatewayMaxBodySize(cfg *config.Config) int64 {

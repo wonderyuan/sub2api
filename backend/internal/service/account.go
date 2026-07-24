@@ -2627,7 +2627,8 @@ const (
 	LegacyCompactBodyLimitBypassExtraKey  = "allow_compact_request_body_limit_bypass"
 	DefaultRequestBodyNormalLimitBytes    = int64(3 * 1024 * 1024)
 	DefaultRequestBodyHeavyLimitBytes     = int64(20 * 1024 * 1024)
-	DefaultRequestBodyRecoveryLimitBytes  = int64(64 * 1024 * 1024)
+	DefaultRequestBodyRecoveryLimitBytes  = int64(32 * 1024 * 1024)
+	MaxRequestBodyRecoveryLimitBytes      = int64(32 * 1024 * 1024)
 	MaxRequestBodyAdmissionLimitBytes     = int64(64 * 1024 * 1024)
 	RequestBodyHeavyConcurrencyPercentage = 20
 )
@@ -2673,7 +2674,7 @@ func (a *Account) GetRequestBodyAdmissionPolicy() RequestBodyAdmissionPolicy {
 	}
 	if policy.HeavyLimitBytes <= policy.NormalLimitBytes ||
 		policy.RecoveryLimitBytes <= policy.HeavyLimitBytes ||
-		policy.RecoveryLimitBytes > MaxRequestBodyAdmissionLimitBytes {
+		policy.RecoveryLimitBytes > MaxRequestBodyRecoveryLimitBytes {
 		policy.NormalLimitBytes = DefaultRequestBodyNormalLimitBytes
 		policy.HeavyLimitBytes = DefaultRequestBodyHeavyLimitBytes
 		policy.RecoveryLimitBytes = DefaultRequestBodyRecoveryLimitBytes
@@ -2689,9 +2690,9 @@ func positiveExtraInt64(v any) int64 {
 	return 0
 }
 
-// Classify sends compact requests directly to the bounded recovery lane. An
-// ordinary request above the heavy threshold also uses recovery, which keeps an
-// oversized conversation recoverable without relying on a client-specific path.
+// Classify reserves the recovery lane for explicit compact requests. Ordinary
+// requests above the heavy threshold must compact first instead of consuming
+// the single global recovery slot.
 func (p RequestBodyAdmissionPolicy) Classify(bodyBytes int64, compactRequest bool) RequestBodyLane {
 	if !p.Enabled {
 		return RequestBodyLaneDisabled
@@ -2699,10 +2700,10 @@ func (p RequestBodyAdmissionPolicy) Classify(bodyBytes int64, compactRequest boo
 	if bodyBytes <= 0 {
 		return RequestBodyLaneNormal
 	}
-	if bodyBytes > p.RecoveryLimitBytes {
-		return RequestBodyLaneRejected
-	}
 	if compactRequest {
+		if bodyBytes > p.RecoveryLimitBytes {
+			return RequestBodyLaneRejected
+		}
 		return RequestBodyLaneRecovery
 	}
 	if bodyBytes <= p.NormalLimitBytes {
@@ -2711,7 +2712,7 @@ func (p RequestBodyAdmissionPolicy) Classify(bodyBytes int64, compactRequest boo
 	if bodyBytes <= p.HeavyLimitBytes {
 		return RequestBodyLaneHeavy
 	}
-	return RequestBodyLaneRecovery
+	return RequestBodyLaneRejected
 }
 
 func RequestBodyHeavyConcurrencyLimit(accountConcurrency int) int {

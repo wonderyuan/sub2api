@@ -56,6 +56,27 @@ func (s *ConcurrencyCacheSuite) requestBodyAdmissionCache() service.RequestBodyA
 	return cache
 }
 
+func mustRedisExists(t *testing.T, client *redis.Client, key string) int64 {
+	t.Helper()
+	value, err := client.Exists(context.Background(), key).Result()
+	require.NoError(t, err)
+	return value
+}
+
+func mustRedisZRange(t *testing.T, client *redis.Client, key string) []string {
+	t.Helper()
+	value, err := client.ZRange(context.Background(), key, 0, -1).Result()
+	require.NoError(t, err)
+	return value
+}
+
+func mustRedisGet(t *testing.T, client *redis.Client, key string) string {
+	t.Helper()
+	value, err := client.Get(context.Background(), key).Result()
+	require.NoError(t, err)
+	return value
+}
+
 func (s *ConcurrencyCacheSuite) TestRequestBodyLane_EnforcesScopeAndPerUserLimits() {
 	cache := s.requestBodyAdmissionCache()
 	ctx := context.Background()
@@ -565,6 +586,53 @@ func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlots() {
 	require.Equal(s.T(), []string{"oldproc-unindexed"}, unindexedMembers)
 	_, err = s.rdb.Get(s.ctx, unindexedAccountWaitKey).Result()
 	require.NoError(s.T(), err)
+}
+
+func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlots_RemovesRequestBodyAdmissionLeases() {
+	recoveryScopeKey := requestBodyLaneScopeKey(service.RequestBodyLaneRecovery, 0)
+	heavyScopeKey := requestBodyLaneScopeKey(service.RequestBodyLaneHeavy, 42)
+	oldUserKey := requestBodyLaneUserKey(1001)
+	activeUserKey := requestBodyLaneUserKey(1002)
+	oldUserWaitKey := requestBodyLaneWaitKey(1001)
+	activeUserWaitKey := requestBodyLaneWaitKey(1002)
+	recoveryWaitKey := requestBodyLaneScopeWaitKey(service.RequestBodyLaneRecovery, 0)
+	now, err := s.rawCache.redisUnixSeconds(s.ctx)
+	require.NoError(s.T(), err)
+
+	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, recoveryScopeKey,
+		redis.Z{Score: float64(now), Member: "oldproc-1:1"},
+	).Err())
+	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, heavyScopeKey,
+		redis.Z{Score: float64(now), Member: "oldproc-2:1"},
+		redis.Z{Score: float64(now), Member: "activeproc-2:1"},
+	).Err())
+	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, oldUserKey,
+		redis.Z{Score: float64(now), Member: "recovery:oldproc-1"},
+	).Err())
+	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, activeUserKey,
+		redis.Z{Score: float64(now), Member: "heavy:activeproc-2"},
+	).Err())
+	require.NoError(s.T(), s.rdb.Set(s.ctx, oldUserWaitKey, "recovery:oldproc-wait", testSlotTTL).Err())
+	require.NoError(s.T(), s.rdb.Set(s.ctx, activeUserWaitKey, "heavy:activeproc-wait", testSlotTTL).Err())
+	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, recoveryWaitKey,
+		redis.Z{Score: float64(now), Member: "1001:oldproc-wait"},
+		redis.Z{Score: float64(now), Member: "1002:activeproc-wait"},
+	).Err())
+	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, requestBodyActiveIndexKey,
+		redis.Z{Score: float64(now + 60), Member: "1001"},
+		redis.Z{Score: float64(now + 60), Member: "1002"},
+	).Err())
+
+	require.NoError(s.T(), s.cache.CleanupStaleProcessSlots(s.ctx, "activeproc-"))
+
+	require.EqualValues(s.T(), 0, mustRedisExists(s.T(), s.rdb, recoveryScopeKey))
+	require.Equal(s.T(), []string{"activeproc-2:1"}, mustRedisZRange(s.T(), s.rdb, heavyScopeKey))
+	require.EqualValues(s.T(), 0, mustRedisExists(s.T(), s.rdb, oldUserKey))
+	require.Equal(s.T(), []string{"heavy:activeproc-2"}, mustRedisZRange(s.T(), s.rdb, activeUserKey))
+	require.EqualValues(s.T(), 0, mustRedisExists(s.T(), s.rdb, oldUserWaitKey))
+	require.Equal(s.T(), "heavy:activeproc-wait", mustRedisGet(s.T(), s.rdb, activeUserWaitKey))
+	require.Equal(s.T(), []string{"1002:activeproc-wait"}, mustRedisZRange(s.T(), s.rdb, recoveryWaitKey))
+	require.Equal(s.T(), []string{"1002"}, mustRedisZRange(s.T(), s.rdb, requestBodyActiveIndexKey))
 }
 
 func (s *ConcurrencyCacheSuite) TestGetAccountConcurrency_Missing() {

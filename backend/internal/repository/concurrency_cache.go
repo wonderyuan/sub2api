@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
@@ -1674,6 +1675,9 @@ func (c *concurrencyCache) CleanupStaleProcessSlots(ctx context.Context, activeR
 	if err := c.sweepLegacyWaitKeysOnce(ctx); err != nil {
 		return err
 	}
+	if err := c.cleanupStaleRequestBodyAdmissionSlots(ctx, activeRequestPrefix); err != nil {
+		return err
+	}
 	now, err := c.redisUnixSeconds(ctx)
 	if err != nil {
 		return err
@@ -1692,6 +1696,122 @@ func (c *concurrencyCache) CleanupStaleProcessSlots(ctx context.Context, activeR
 		return err
 	}
 	return c.cleanupStaleProcessSlotsForIndex(ctx, userSlotIndex, userMembers, activeRequestPrefix, now)
+}
+
+func requestBodyAdmissionMemberHasProcessPrefix(member, activeRequestPrefix string) bool {
+	for _, part := range strings.Split(member, ":") {
+		if strings.HasPrefix(part, activeRequestPrefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func requestBodyAdmissionUserIDFromKey(key, keyPrefix string) (int64, bool) {
+	rawID := strings.TrimPrefix(key, keyPrefix)
+	if rawID == key || rawID == "" || strings.Contains(rawID, ":") {
+		return 0, false
+	}
+	userID, err := strconv.ParseInt(rawID, 10, 64)
+	return userID, err == nil && userID > 0
+}
+
+// cleanupStaleRequestBodyAdmissionSlots removes leases left by a terminated
+// process. These keys are not covered by the account/user active indexes and a
+// stale global recovery member would otherwise block compaction for one full
+// slot TTL after an OOM restart.
+func (c *concurrencyCache) cleanupStaleRequestBodyAdmissionSlots(ctx context.Context, activeRequestPrefix string) error {
+	activeUsers := make(map[int64]struct{})
+	cleanupZSet := func(key string) (bool, error) {
+		members, err := c.rdb.ZRange(ctx, key, 0, -1).Result()
+		if err != nil {
+			return false, err
+		}
+		stale := make([]any, 0, len(members))
+		hasActive := false
+		for _, member := range members {
+			if requestBodyAdmissionMemberHasProcessPrefix(member, activeRequestPrefix) {
+				hasActive = true
+				continue
+			}
+			stale = append(stale, member)
+		}
+		if len(stale) > 0 {
+			if err := c.rdb.ZRem(ctx, key, stale...).Err(); err != nil {
+				return false, err
+			}
+		}
+		return hasActive, nil
+	}
+
+	patterns := []struct {
+		pattern       string
+		userKeyPrefix string
+		waitKeys      bool
+	}{
+		{pattern: requestBodyLaneKeyPrefix + "{admission}:*", userKeyPrefix: requestBodyLaneKeyPrefix + "{admission}:user:"},
+		{pattern: requestBodyLaneWaitKeyPrefix + "{admission}:*", userKeyPrefix: requestBodyLaneWaitKeyPrefix + "{admission}:user:", waitKeys: true},
+	}
+	for _, item := range patterns {
+		var cursor uint64
+		for {
+			keys, next, err := c.rdb.Scan(ctx, cursor, item.pattern, 200).Result()
+			if err != nil {
+				return fmt.Errorf("scan request body admission keys %s: %w", item.pattern, err)
+			}
+			for _, key := range keys {
+				hasActive := false
+				if item.waitKeys && strings.HasPrefix(key, item.userKeyPrefix) {
+					value, getErr := c.rdb.Get(ctx, key).Result()
+					if getErr != nil && !errors.Is(getErr, redis.Nil) {
+						return fmt.Errorf("read request body wait key %s: %w", key, getErr)
+					}
+					hasActive = getErr == nil && requestBodyAdmissionMemberHasProcessPrefix(value, activeRequestPrefix)
+					if getErr == nil && !hasActive {
+						if err := c.rdb.Del(ctx, key).Err(); err != nil {
+							return fmt.Errorf("delete stale request body wait key %s: %w", key, err)
+						}
+					}
+				} else {
+					hasActive, err = cleanupZSet(key)
+					if err != nil {
+						return fmt.Errorf("clean stale request body admission key %s: %w", key, err)
+					}
+				}
+				if hasActive {
+					if userID, ok := requestBodyAdmissionUserIDFromKey(key, item.userKeyPrefix); ok {
+						activeUsers[userID] = struct{}{}
+					}
+				}
+			}
+			cursor = next
+			if cursor == 0 {
+				break
+			}
+		}
+	}
+
+	if err := c.rdb.Del(ctx, requestBodyActiveIndexKey).Err(); err != nil {
+		return fmt.Errorf("reset request body active index: %w", err)
+	}
+	if len(activeUsers) == 0 {
+		return nil
+	}
+	now, err := c.redisUnixSeconds(ctx)
+	if err != nil {
+		return err
+	}
+	entries := make([]redis.Z, 0, len(activeUsers))
+	for userID := range activeUsers {
+		entries = append(entries, redis.Z{
+			Score:  float64(now + int64(c.slotTTLSeconds)),
+			Member: strconv.FormatInt(userID, 10),
+		})
+	}
+	if err := c.rdb.ZAdd(ctx, requestBodyActiveIndexKey, entries...).Err(); err != nil {
+		return fmt.Errorf("rebuild request body active index: %w", err)
+	}
+	return nil
 }
 
 // sweepLegacyWaitKeysOnce 一次性清扫活跃索引机制上线前遗留的等待计数键。

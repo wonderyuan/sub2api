@@ -72,11 +72,45 @@ func readRequestBodyWithPrealloc(req *http.Request, rejectDecompressedOverflow b
 // ReadLenientJSONRequestBodyWithPrealloc reads a request body and normalizes
 // JSON string control bytes before strict validation.
 func ReadLenientJSONRequestBodyWithPrealloc(req *http.Request, maxNormalizedBytes int64) ([]byte, error) {
-	body, err := readRequestBodyWithPrealloc(req, true)
+	if maxNormalizedBytes <= 0 {
+		maxNormalizedBytes = MaxDecompressedBodySize
+	}
+	body, err := readRequestBodyWithPreallocLimit(req, maxNormalizedBytes)
 	if err != nil {
 		return nil, err
 	}
 	return NormalizeLenientJSONRequestBody(body, maxNormalizedBytes)
+}
+
+func readRequestBodyWithPreallocLimit(req *http.Request, maxBodyBytes int64) ([]byte, error) {
+	if req == nil || req.Body == nil {
+		return nil, nil
+	}
+	if maxBodyBytes <= 0 {
+		return nil, &http.MaxBytesError{Limit: maxBodyBytes}
+	}
+
+	raw, err := readAllWithLimit(req.Body, maxBodyBytes)
+	if err != nil {
+		return nil, err
+	}
+	enc := strings.ToLower(strings.TrimSpace(req.Header.Get("Content-Encoding")))
+	if enc == "" || enc == "identity" {
+		return raw, nil
+	}
+
+	decodedLimit := maxBodyBytes
+	if decodedLimit > MaxDecompressedBodySize {
+		decodedLimit = MaxDecompressedBodySize
+	}
+	decoded, err := decompressRequestBody(enc, raw, decodedLimit, true)
+	if err != nil {
+		return nil, fmt.Errorf("decode Content-Encoding %q: %w", enc, err)
+	}
+	req.Header.Del("Content-Encoding")
+	req.Header.Del("Content-Length")
+	req.ContentLength = int64(len(decoded))
+	return decoded, nil
 }
 
 func decompressRequestBody(encoding string, raw []byte, maxDecodedBytes int64, rejectOverflow bool) ([]byte, error) {

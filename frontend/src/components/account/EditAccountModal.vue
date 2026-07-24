@@ -2888,10 +2888,10 @@ const rpmStrategy = ref<'tiered' | 'sticky_exempt'>('tiered')
 const rpmStickyBuffer = ref<number | null>(null)
 const userMsgQueueMode = ref('')
 const requestBodyAdmissionEnabled = ref(false)
-const requestBodyAdmissionMaxLimitMB = 64
+const requestBodyAdmissionMaxLimitMB = 32
 const requestBodyNormalLimitMB = ref(3)
 const requestBodyHeavyLimitMB = ref(20)
-const requestBodyRecoveryLimitMB = ref(64)
+const requestBodyRecoveryLimitMB = ref(32)
 const umqModeOptions = computed(() => [
   { value: '', label: t('admin.accounts.quotaControl.rpmLimit.umqModeOff') },
   { value: 'throttle', label: t('admin.accounts.quotaControl.rpmLimit.umqModeThrottle') },
@@ -3349,7 +3349,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   }
   requestBodyNormalLimitMB.value = bytesToMB(extra?.request_body_normal_limit_bytes, 3)
   requestBodyHeavyLimitMB.value = bytesToMB(extra?.request_body_heavy_limit_bytes, 20)
-  requestBodyRecoveryLimitMB.value = bytesToMB(extra?.request_body_recovery_limit_bytes, 64)
+  requestBodyRecoveryLimitMB.value = bytesToMB(extra?.request_body_recovery_limit_bytes, 32)
 	upstreamBillingAutoProbeEnabled.value = extra?.upstream_billing_probe_enabled === true
 
   // Load OpenAI passthrough toggle (OpenAI OAuth/SetupToken/API Key)
@@ -4764,7 +4764,7 @@ const handleSubmit = async () => {
         newExtra.request_body_admission_enabled = requestBodyAdmissionEnabled.value
         newExtra.request_body_normal_limit_bytes = mbToBytes(requestBodyNormalLimitMB.value, 3)
         newExtra.request_body_heavy_limit_bytes = mbToBytes(requestBodyHeavyLimitMB.value, 20)
-        newExtra.request_body_recovery_limit_bytes = mbToBytes(requestBodyRecoveryLimitMB.value, 64)
+        newExtra.request_body_recovery_limit_bytes = mbToBytes(requestBodyRecoveryLimitMB.value, 32)
       } else {
         delete newExtra.request_body_admission_enabled
         delete newExtra.request_body_normal_limit_bytes

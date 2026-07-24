@@ -403,7 +403,7 @@ describe('EditAccountModal', () => {
       request_body_admission_enabled: true,
       request_body_normal_limit_bytes: 3 * 1024 * 1024,
       request_body_heavy_limit_bytes: 20 * 1024 * 1024,
-      request_body_recovery_limit_bytes: 64 * 1024 * 1024
+      request_body_recovery_limit_bytes: 32 * 1024 * 1024
     }
     updateAccountMock.mockReset()
     checkMixedChannelRiskMock.mockReset()
@@ -415,7 +415,7 @@ describe('EditAccountModal', () => {
     expect(toggle.attributes('aria-checked')).toBe('true')
     expect(wrapper.get<HTMLInputElement>('[data-testid="request-body-normal-limit"]').element.value).toBe('3')
     expect(wrapper.get<HTMLInputElement>('[data-testid="request-body-heavy-limit"]').element.value).toBe('20')
-    expect(wrapper.get<HTMLInputElement>('[data-testid="request-body-recovery-limit"]').element.value).toBe('64')
+    expect(wrapper.get<HTMLInputElement>('[data-testid="request-body-recovery-limit"]').element.value).toBe('32')
 
     await wrapper.get('form#edit-account-form').trigger('submit.prevent')
 
@@ -424,7 +424,7 @@ describe('EditAccountModal', () => {
     expect(extra?.request_body_admission_enabled).toBe(true)
     expect(extra?.request_body_normal_limit_bytes).toBe(3 * 1024 * 1024)
     expect(extra?.request_body_heavy_limit_bytes).toBe(20 * 1024 * 1024)
-    expect(extra?.request_body_recovery_limit_bytes).toBe(64 * 1024 * 1024)
+    expect(extra?.request_body_recovery_limit_bytes).toBe(32 * 1024 * 1024)
     expect(extra?.request_body_limit_bytes).toBeUndefined()
     expect(extra?.allow_compact_request_body_limit_bypass).toBeUndefined()
   })
@@ -448,7 +448,7 @@ describe('EditAccountModal', () => {
     expect(extra?.request_body_admission_enabled).toBe(true)
     expect(extra?.request_body_normal_limit_bytes).toBe(3 * 1024 * 1024)
     expect(extra?.request_body_heavy_limit_bytes).toBe(20 * 1024 * 1024)
-    expect(extra?.request_body_recovery_limit_bytes).toBe(64 * 1024 * 1024)
+    expect(extra?.request_body_recovery_limit_bytes).toBe(32 * 1024 * 1024)
   })
 
   it('rejects unordered tiered request body limits before calling the API', async () => {

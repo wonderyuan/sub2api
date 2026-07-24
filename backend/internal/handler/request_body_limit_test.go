@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	pkghttputil "github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -75,6 +76,19 @@ func TestRequestBodyLimitTooLarge(t *testing.T) {
 	require.Contains(t, recorder.Body.String(), buildBodyTooLargeMessage(limit))
 }
 
+func TestOpenAIResponsesReadLimitHonorsLowerTextLimit(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Gateway.MaxBodySize = 16
+	cfg.Gateway.TextMaxBodySize = 8
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(bytes.Repeat([]byte("a"), 9)))
+
+	_, err := readOpenAIResponsesRequestBodyWithPrealloc(req, cfg)
+
+	var maxErr *http.MaxBytesError
+	require.ErrorAs(t, err, &maxErr)
+	require.Equal(t, int64(8), maxErr.Limit)
+}
+
 func TestRequestBodyAdmissionPolicyIgnoresLegacyHardLimit(t *testing.T) {
 	account := &service.Account{
 		Platform: service.PlatformOpenAI,
@@ -99,7 +113,7 @@ func TestRequestBodyAdmissionPolicyClassifiesConfiguredLanes(t *testing.T) {
 	policy := account.GetRequestBodyAdmissionPolicy()
 	require.Equal(t, service.RequestBodyLaneNormal, policy.Classify(10, false))
 	require.Equal(t, service.RequestBodyLaneHeavy, policy.Classify(11, false))
-	require.Equal(t, service.RequestBodyLaneRecovery, policy.Classify(21, false))
+	require.Equal(t, service.RequestBodyLaneRejected, policy.Classify(21, false))
 	require.Equal(t, service.RequestBodyLaneRecovery, policy.Classify(1, true))
 	require.Equal(t, service.RequestBodyLaneRejected, policy.Classify(31, true))
 }
@@ -122,7 +136,7 @@ func TestReleaseSelectionForRequestBodyLaneWait(t *testing.T) {
 	require.Equal(t, 10, selection.WaitPlan.MaxConcurrency)
 }
 
-func TestRequestBodyAdmissionRejectionUsesStandardErrorTypeAndStableCode(t *testing.T) {
+func TestOrdinaryRequestAboveHeavyLimitUsesStableCode(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -146,6 +160,33 @@ func TestRequestBodyAdmissionRejectionUsesStandardErrorTypeAndStableCode(t *test
 	require.False(t, admitted)
 	require.Equal(t, http.StatusRequestEntityTooLarge, recorder.Code)
 	require.Equal(t, "invalid_request_error", gjson.GetBytes(recorder.Body.Bytes(), "error.type").String())
+	require.Equal(t, requestBodyHeavyLimitExceededCode, gjson.GetBytes(recorder.Body.Bytes(), "error.code").String())
+	require.Contains(t, gjson.GetBytes(recorder.Body.Bytes(), "error.message").String(), "compact the conversation")
+}
+
+func TestCompactRequestAboveRecoveryLimitUsesStableCode(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses/compact", http.NoBody)
+	selection := &service.AccountSelectionResult{Account: &service.Account{
+		ID:       9,
+		Platform: service.PlatformOpenAI,
+		Extra: map[string]any{
+			service.RequestBodyAdmissionEnabledExtraKey: true,
+			service.RequestBodyNormalLimitExtraKey:      int64(10),
+			service.RequestBodyHeavyLimitExtraKey:       int64(20),
+			service.RequestBodyRecoveryLimitExtraKey:    int64(30),
+		},
+	}}
+	streamStarted := false
+
+	_, admitted := (&OpenAIGatewayHandler{}).acquireResponsesRequestBodyLane(
+		c, nil, selection, 1, 31, true, false, &streamStarted, nil, nil,
+	)
+
+	require.False(t, admitted)
+	require.Equal(t, http.StatusRequestEntityTooLarge, recorder.Code)
 	require.Equal(t, requestBodyRecoveryLimitExceededCode, gjson.GetBytes(recorder.Body.Bytes(), "error.code").String())
 }
 

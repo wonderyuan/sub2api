@@ -123,7 +123,7 @@ func TestOpenAICompactRequestUsesRecoveryLane(t *testing.T) {
 			path:      "/v1/responses",
 			body:      normalBody,
 			bodyBytes: 21,
-			want:      service.RequestBodyLaneRecovery,
+			want:      service.RequestBodyLaneRejected,
 		},
 		{
 			name:      "request exceeds recovery limit",

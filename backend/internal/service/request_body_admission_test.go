@@ -19,7 +19,7 @@ func TestRequestBodyAdmissionPolicyDefaultsAndClassification(t *testing.T) {
 	require.Equal(t, DefaultRequestBodyRecoveryLimitBytes, policy.RecoveryLimitBytes)
 	require.Equal(t, RequestBodyLaneNormal, policy.Classify(policy.NormalLimitBytes, false))
 	require.Equal(t, RequestBodyLaneHeavy, policy.Classify(policy.NormalLimitBytes+1, false))
-	require.Equal(t, RequestBodyLaneRecovery, policy.Classify(policy.HeavyLimitBytes+1, false))
+	require.Equal(t, RequestBodyLaneRejected, policy.Classify(policy.HeavyLimitBytes+1, false))
 	require.Equal(t, RequestBodyLaneRecovery, policy.Classify(1, true))
 	require.Equal(t, RequestBodyLaneRejected, policy.Classify(policy.RecoveryLimitBytes+1, true))
 }
@@ -82,6 +82,16 @@ func TestNormalizeRequestBodyAdmissionExtraRejectsLimitAboveRuntimeMaximum(t *te
 		RequestBodyNormalLimitExtraKey:      int64(10),
 		RequestBodyHeavyLimitExtraKey:       int64(20),
 		RequestBodyRecoveryLimitExtraKey:    MaxRequestBodyAdmissionLimitBytes + 1,
+	})
+	require.Error(t, err)
+}
+
+func TestNormalizeRequestBodyAdmissionExtraRejectsRecoveryLimitAboveSafeMaximum(t *testing.T) {
+	_, err := normalizeRequestBodyAdmissionExtra(PlatformOpenAI, map[string]any{
+		RequestBodyAdmissionEnabledExtraKey: true,
+		RequestBodyNormalLimitExtraKey:      int64(10),
+		RequestBodyHeavyLimitExtraKey:       int64(20),
+		RequestBodyRecoveryLimitExtraKey:    MaxRequestBodyRecoveryLimitBytes + 1,
 	})
 	require.Error(t, err)
 }

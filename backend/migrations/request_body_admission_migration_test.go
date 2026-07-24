@@ -21,3 +21,16 @@ func TestMigration187ReplacesLegacyBodyLimitAndCompactBypass(t *testing.T) {
 	require.Contains(t, sql, "|| (\n        COALESCE(account.extra")
 	require.Contains(t, sql, "platform IS DISTINCT FROM 'openai'")
 }
+
+func TestMigration188BoundsRecoveryChannelForExistingAccounts(t *testing.T) {
+	content, err := FS.ReadFile("188_bound_request_body_recovery_channel.sql")
+	require.NoError(t, err)
+
+	sql := string(content)
+	require.Contains(t, sql, "request_body_admission_enabled")
+	require.Contains(t, sql, "request_body_normal_limit_bytes")
+	require.Contains(t, sql, "request_body_heavy_limit_bytes")
+	require.Contains(t, sql, "request_body_recovery_limit_bytes")
+	require.Contains(t, sql, "33554432")
+	require.Contains(t, sql, "platform = 'openai'")
+}

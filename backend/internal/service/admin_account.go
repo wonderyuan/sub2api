@@ -425,10 +425,14 @@ func validateRequestBodyAdmissionExtra(platform string, extra map[string]any) er
 				return infraerrors.BadRequest("REQUEST_BODY_ADMISSION_INVALID", limit.key+" must be a positive number")
 			}
 		}
-		if value > MaxRequestBodyAdmissionLimitBytes {
+		maxValue := MaxRequestBodyAdmissionLimitBytes
+		if limit.key == RequestBodyRecoveryLimitExtraKey {
+			maxValue = MaxRequestBodyRecoveryLimitBytes
+		}
+		if value > maxValue {
 			return infraerrors.BadRequest(
 				"REQUEST_BODY_ADMISSION_INVALID",
-				fmt.Sprintf("%s must not exceed %d bytes", limit.key, MaxRequestBodyAdmissionLimitBytes),
+				fmt.Sprintf("%s must not exceed %d bytes", limit.key, maxValue),
 			)
 		}
 		values = append(values, value)
