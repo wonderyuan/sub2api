@@ -33,8 +33,8 @@ const lastUpdated = ref<string | null>(null)
 const loadWarning = ref('')
 const rangeData = ref<MonitorCenterRangeData | null>(null)
 const openAIStatus = ref<MonitorCenterOpenAIStatusResponse | null>(null)
-const openAIHourHistory = ref<MonitorCenterOpenAIHistoryResponse | null>(null)
-const probeHour = ref<MonitorCenterProbeResponse | null>(null)
+const openAIRangeHistory = ref<MonitorCenterOpenAIHistoryResponse | null>(null)
+const probeRange = ref<MonitorCenterProbeResponse | null>(null)
 const threeDayData = ref<MonitorCenterThreeDayData | null>(null)
 let requestController: AbortController | null = null
 let requestSequence = 0
@@ -78,11 +78,12 @@ async function loadData(options: { force?: boolean; includeHistory?: boolean } =
   loadWarning.value = ''
 
   const execute = async () => {
+    const rangeParams = buildRangeParams()
     const requests = [
-      monitorCenterAPI.getRangeData(buildRangeParams(), controller.signal),
+      monitorCenterAPI.getRangeData(rangeParams, controller.signal),
       monitorCenterAPI.getOpenAIStatus(controller.signal),
-      monitorCenterAPI.getOpenAIHistory('1h', controller.signal),
-      monitorCenterAPI.getProbe('1h', controller.signal),
+      monitorCenterAPI.getOpenAIHistory(rangeParams, controller.signal),
+      monitorCenterAPI.getProbe(rangeParams, controller.signal),
       options.includeHistory === false ? Promise.resolve(null) : monitorCenterAPI.getThreeDayData(controller.signal),
     ] as const
     const results = await Promise.allSettled(requests)
@@ -96,8 +97,8 @@ async function loadData(options: { force?: boolean; includeHistory?: boolean } =
       successfulRequests += results[0].value.success_count
     }
     if (results[1].status === 'fulfilled') openAIStatus.value = results[1].value
-    if (results[2].status === 'fulfilled') openAIHourHistory.value = results[2].value
-    if (results[3].status === 'fulfilled') probeHour.value = results[3].value
+    if (results[2].status === 'fulfilled') openAIRangeHistory.value = results[2].value
+    if (results[3].status === 'fulfilled') probeRange.value = results[3].value
     successfulRequests += results.slice(1, 4).filter((result) => result.status === 'fulfilled').length
     if (results[4].status === 'fulfilled' && results[4].value) {
       threeDayData.value = { ...(threeDayData.value ?? {}), ...results[4].value.data }
@@ -190,6 +191,7 @@ onBeforeUnmount(() => {
 })
 
 const slowPrimaryCause = computed(() => rangeData.value?.performance?.causes?.[0])
+const appliedRangeLabel = computed(() => t(`admin.monitorCenter.ranges.${appliedRange.value}`))
 function causeLabel(cause?: string): string {
   if (!cause) return t('admin.monitorCenter.slow.noSlowRequests')
   const key = `admin.ops.performance.causes.${cause}`
@@ -232,9 +234,9 @@ function causeLabel(cause?: string): string {
       <MonitorCockpit :overview="rangeData?.overview ?? null" :throughput="rangeData?.throughput ?? null" :loading="loading" />
 
       <section class="mc-section-grid">
-        <UpstreamStatusPanel :status="openAIStatus" :history="openAIHourHistory" :loading="loading" />
+        <UpstreamStatusPanel :status="openAIStatus" :history="openAIRangeHistory" :range-label="appliedRangeLabel" :loading="loading" />
         <GatewayStatusPanel :overview="rangeData?.overview ?? null" :errors="rangeData?.errors ?? null" :throughput="rangeData?.throughput ?? null" :loading="loading" />
-        <RealProbePanel :probe="probeHour" :loading="loading" />
+        <RealProbePanel :probe="probeRange" :loading="loading" />
       </section>
 
       <RequestLatencyChart :points="rangeData?.latency?.points ?? []" :overview="rangeData?.overview ?? null" :loading="loading" :range="appliedRange" />

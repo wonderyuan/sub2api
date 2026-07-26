@@ -33,8 +33,9 @@ export default {
     upstream: {
       title: 'OpenAI 官方服务', incidentCount: '未解决事故 {count}', lastSync: '最后同步 {time}',
       stale: '官方状态本次同步失败，当前展示 {time} 的最后成功数据。', unavailable: '尚无可用的 OpenAI 官方状态数据。',
-      notReported: '未报告', oneHourHistory: '最近一小时状态', noIncidents: '当前没有未解决事故',
-      noIncidentsHint: '最近一小时 API、ChatGPT 与 Codex 未发现官方事故',
+      notReported: '未报告', oneHourHistory: '最近一小时状态', rangeHistory: '最近{range}状态', coverage: '采样覆盖 {actual}/{expected} 分钟（{percent}%）',
+      missingSample: '无采样', unresolvedIncident: '未解决事故', incidentMarker: '{count} 个未解决事故', noIncidents: '当前没有未解决事故',
+      noIncidentsHint: 'OpenAI 当前未报告未解决事故',
       incidentMeta: '{status} · 影响 {impact} · 更新于 {time}', officialDetails: '官方详情', openOfficial: '打开 OpenAI Status',
     },
     gateway: {
@@ -58,8 +59,9 @@ export default {
     },
     slow: {
       title: '慢请求根因诊断', primaryCause: '{cause} 占慢请求的 {share}', noSlowRequests: '所选时段暂无慢请求',
-      ranking: '慢因排名', impact: '影响范围', impactHint: '按用户、账号或模型查看', slowRate: '慢请求率',
+      ranking: '慢因排名', impact: '影响范围', impactHint: '加载全部用户、账号或模型，可滚动查看并按列排序', slowRate: '慢请求率',
       queueP95: '排队 P95', requests: '请求数', mainCause: '主要慢因', dimensions: { user: '用户', account: '账号', model: '模型' },
+      sortBy: '按{column}排序',
       ingestionWarning: '性能遥测存在数据损失：丢弃 {dropped} 条，写入失败 {failed} 条。',
     },
     history: {

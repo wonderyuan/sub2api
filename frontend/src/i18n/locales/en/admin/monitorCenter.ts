@@ -27,8 +27,9 @@ export default {
     upstream: {
       title: 'OpenAI official services', incidentCount: '{count} unresolved incidents', lastSync: 'Last sync {time}',
       stale: 'The latest sync failed. Showing the last successful data from {time}.', unavailable: 'No successful OpenAI status data is available yet.',
-      notReported: 'Not reported', oneHourHistory: 'Last hour status', noIncidents: 'No unresolved incidents',
-      noIncidentsHint: 'No official API, ChatGPT, or Codex incidents were observed in the last hour', incidentMeta: '{status} · {impact} impact · updated {time}',
+      notReported: 'Not reported', oneHourHistory: 'Last hour status', rangeHistory: 'Last {range} status', coverage: 'Coverage {actual}/{expected} min ({percent}%)',
+      missingSample: 'No sample', unresolvedIncident: 'Unresolved incident', incidentMarker: '{count} unresolved incident(s)', noIncidents: 'No unresolved incidents',
+      noIncidentsHint: 'OpenAI currently reports no unresolved incidents', incidentMeta: '{status} · {impact} impact · updated {time}',
       officialDetails: 'Official details', openOfficial: 'Open OpenAI Status',
     },
     gateway: {
@@ -49,7 +50,8 @@ export default {
     },
     slow: {
       title: 'Slow request root causes', primaryCause: '{cause} accounts for {share} of slow requests', noSlowRequests: 'No slow requests in this range',
-      ranking: 'Cause ranking', impact: 'Impact scope', impactHint: 'Inspect by user, account, or model', slowRate: 'Slow request rate', queueP95: 'Queue P95', requests: 'Requests', mainCause: 'Primary cause',
+      ranking: 'Cause ranking', impact: 'Impact scope', impactHint: 'All users, accounts, or models; scroll and sort by any column', slowRate: 'Slow request rate', queueP95: 'Queue P95', requests: 'Requests', mainCause: 'Primary cause',
+      sortBy: 'Sort by {column}',
       dimensions: { user: 'User', account: 'Account', model: 'Model' }, ingestionWarning: 'Performance telemetry lost data: {dropped} dropped and {failed} failed writes.',
     },
     history: {

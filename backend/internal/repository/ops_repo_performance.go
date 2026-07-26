@@ -303,7 +303,7 @@ func (r *opsRepository) queryPerformanceImpacts(ctx context.Context, where strin
 		{name: "account", id: "p.account_id::text", label: "COALESCE(NULLIF(a.name, ''), '#' || p.account_id::text)", join: "LEFT JOIN accounts a ON a.id = p.account_id"},
 		{name: "model", id: "p.model", label: "p.model", join: ""},
 	}
-	result := make([]service.OpsPerformanceImpact, 0, 24)
+	result := make([]service.OpsPerformanceImpact, 0)
 	for _, dimension := range dimensions {
 		query := `SELECT ` + dimension.id + `, ` + dimension.label + `, COUNT(*),
 COALESCE(100.0 * COUNT(*) FILTER (WHERE p.slow_cause <> 'healthy') / NULLIF(COUNT(*), 0), 0),
@@ -312,7 +312,7 @@ COALESCE(100.0 * COUNT(*) FILTER (WHERE p.slow_cause <> 'healthy') / NULLIF(COUN
 	percentile_cont(0.95) WITHIN GROUP (ORDER BY GREATEST(p.user_queue_ms, p.body_lane_wait_ms, p.account_queue_ms)),
 	COALESCE(mode() WITHIN GROUP (ORDER BY NULLIF(p.slow_cause, 'healthy')), 'healthy')
 FROM ops_request_performance p ` + dimension.join + ` WHERE ` + where + ` GROUP BY ` + dimension.id + `, ` + dimension.label + `
-ORDER BY COUNT(*) FILTER (WHERE p.slow_cause <> 'healthy') DESC, COUNT(*) DESC LIMIT 8`
+ORDER BY COUNT(*) FILTER (WHERE p.slow_cause <> 'healthy') DESC, COUNT(*) DESC`
 		rows, err := r.db.QueryContext(ctx, query, args...)
 		if err != nil {
 			return nil, err

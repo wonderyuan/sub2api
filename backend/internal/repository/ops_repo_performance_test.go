@@ -74,7 +74,7 @@ func TestQueryPerformanceImpactsReturnsRowsIterationError(t *testing.T) {
 	where, args := performanceWhere(&service.OpsDashboardFilter{StartTime: start, EndTime: end})
 	wantErr := errors.New("rows interrupted")
 
-	mock.ExpectQuery(`(?s)SELECT p\.user_id::text.*FROM ops_request_performance p LEFT JOIN users`).
+	mock.ExpectQuery(`(?s)SELECT p\.user_id::text.*FROM ops_request_performance p LEFT JOIN users.*ORDER BY COUNT\(\*\) FILTER \(WHERE p\.slow_cause <> 'healthy'\) DESC, COUNT\(\*\) DESC$`).
 		WithArgs(start, end).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "request_count", "slow_rate", "e2e", "ttft", "queue", "cause"}).
 			AddRow("1", "user", int64(1), float64(0), float64(10), float64(5), float64(0), "healthy").

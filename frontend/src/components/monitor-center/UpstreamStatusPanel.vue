@@ -14,6 +14,7 @@ import { formatDateTime, statusLabel, statusTone } from './monitorCenterUtils'
 const props = defineProps<{
   status: MonitorCenterOpenAIStatusResponse | null
   history: MonitorCenterOpenAIHistoryResponse | null
+  rangeLabel: string
   loading: boolean
 }>()
 
@@ -21,6 +22,15 @@ const { t } = useI18n()
 const groupOrder = ['api', 'chatgpt', 'codex']
 const groups = computed(() => [...(props.status?.groups ?? [])].sort((a, b) => groupOrder.indexOf(a.key) - groupOrder.indexOf(b.key)))
 const latestIncident = computed(() => props.status?.incidents?.[0] ?? null)
+const historySlotCount = 30
+
+interface HistorySlot {
+  start: Date
+  end: Date
+  status: MonitorCenterStatus | null
+  incidentCount: number
+  fetchFailed: boolean
+}
 
 function groupStatusAt(point: MonitorCenterOpenAIHistoryResponse['points'][number], key: string): MonitorCenterStatus {
   if (key === 'api') return point.api_status
@@ -29,15 +39,61 @@ function groupStatusAt(point: MonitorCenterOpenAIHistoryResponse['points'][numbe
   return 'unknown'
 }
 
-function sampledHistory(group: MonitorCenterServiceGroup): MonitorCenterStatus[] {
-  const points = props.history?.points ?? []
-  if (!points.length) return []
-  const target = 30
-  const step = Math.max(1, Math.ceil(points.length / target))
-  return points.filter((_, index) => index % step === 0).slice(-target).map((point) => {
-    if (point.fetch_status !== 'success') return 'unknown'
-    return groupStatusAt(point, group.key)
-  })
+function statusSeverity(status: MonitorCenterStatus): number {
+  if (status === 'operational') return 0
+  if (status === 'under_maintenance') return 1
+  if (status === 'degraded_performance') return 2
+  if (status === 'partial_outage') return 3
+  if (status === 'major_outage') return 4
+  return -1
+}
+
+function historySlots(group: MonitorCenterServiceGroup): HistorySlot[] {
+  const start = new Date(props.history?.start_time ?? '')
+  const end = new Date(props.history?.end_time ?? '')
+  const duration = end.getTime() - start.getTime()
+  if (!Number.isFinite(duration) || duration <= 0) return []
+  const slotDuration = duration / historySlotCount
+  const slots = Array.from({ length: historySlotCount }, (_, index): HistorySlot => ({
+    start: new Date(start.getTime() + index * slotDuration),
+    end: new Date(start.getTime() + (index + 1) * slotDuration),
+    status: null,
+    incidentCount: 0,
+    fetchFailed: false,
+  }))
+  for (const point of props.history?.points ?? []) {
+    const timestamp = new Date(point.timestamp).getTime()
+    if (!Number.isFinite(timestamp) || timestamp < start.getTime() || timestamp > end.getTime()) continue
+    const index = Math.min(historySlotCount - 1, Math.floor((timestamp - start.getTime()) / slotDuration))
+    const slot = slots[index]
+    slot.incidentCount = Math.max(slot.incidentCount, point.active_incident_count || 0)
+    if (point.fetch_status !== 'success') {
+      slot.fetchFailed = true
+      slot.status = 'unknown'
+      continue
+    }
+    if (slot.fetchFailed) continue
+    const next = groupStatusAt(point, group.key)
+    if (slot.status == null || statusSeverity(next) > statusSeverity(slot.status)) slot.status = next
+  }
+  return slots
+}
+
+const historyCoverage = computed(() => {
+  const start = new Date(props.history?.start_time ?? '').getTime()
+  const end = new Date(props.history?.end_time ?? '').getTime()
+  const duration = end - start
+  const expected = Number.isFinite(duration) && duration > 0 ? Math.ceil(duration / 60_000) : 0
+  const minutes = new Set((props.history?.points ?? []).map(point => Math.floor(new Date(point.timestamp).getTime() / 60_000)).filter(Number.isFinite))
+  const actual = Math.min(expected, minutes.size)
+  return { actual, expected, percent: expected ? Math.round(actual / expected * 100) : 0 }
+})
+
+function slotTitle(slot: HistorySlot): string {
+  const time = `${formatDateTime(slot.start.toISOString())} - ${formatDateTime(slot.end.toISOString())}`
+  const state = slot.status == null ? t('admin.monitorCenter.upstream.missingSample') : statusLabel(t, slot.status)
+  const incident = slot.incidentCount ? ` · ${t('admin.monitorCenter.upstream.incidentMarker', { count: slot.incidentCount })}` : ''
+  return `${time} · ${state}${incident}`
 }
 
 function incidentTone(incident: MonitorCenterIncident): string {
@@ -87,12 +143,26 @@ function incidentTone(incident: MonitorCenterIncident): string {
     <div v-else class="mc-empty mc-upstream-empty">{{ loading ? t('common.loading') : t('common.noData') }}</div>
 
     <div class="mc-bands">
+      <div class="mc-band-summary">
+        <span>{{ t('admin.monitorCenter.upstream.rangeHistory', { range: rangeLabel }) }}</span>
+        <span>{{ t('admin.monitorCenter.upstream.coverage', historyCoverage) }}</span>
+      </div>
       <div v-for="group in groups" :key="group.key" class="mc-band-row">
         <span>{{ group.name }}</span>
-        <div v-if="sampledHistory(group).length" class="mc-band" :aria-label="`${group.name} ${t('admin.monitorCenter.upstream.oneHourHistory')}`">
-          <i v-for="(item, index) in sampledHistory(group)" :key="index" :class="statusTone(item)" :title="statusLabel(t, item)" />
+        <div v-if="historySlots(group).length" class="mc-band" :aria-label="`${group.name} ${t('admin.monitorCenter.upstream.rangeHistory', { range: rangeLabel })}`">
+          <i
+            v-for="(item, index) in historySlots(group)"
+            :key="index"
+            :class="[item.status == null ? 'missing' : statusTone(item.status), { incident: item.incidentCount > 0 }]"
+            :title="slotTitle(item)"
+          />
         </div>
         <div v-else class="mc-band-empty">{{ t('common.noData') }}</div>
+      </div>
+      <div class="mc-band-legend">
+        <span><i class="good" />{{ t('admin.monitorCenter.status.operational') }}</span>
+        <span><i class="incident" />{{ t('admin.monitorCenter.upstream.unresolvedIncident') }}</span>
+        <span><i class="missing" />{{ t('admin.monitorCenter.upstream.missingSample') }}</span>
       </div>
     </div>
 
@@ -134,6 +204,8 @@ function incidentTone(incident: MonitorCenterIncident): string {
 .mc-component-list > div span:last-child { flex: none; font-weight: 650; }
 .mc-upstream-empty { min-height: 94px; }
 .mc-bands { display: grid; gap: 6px; margin-top: 11px; border-top: 1px solid var(--mc-line); padding-top: 10px; }
+.mc-band-summary { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--mc-subtle); font-size: 9px; }
+.mc-band-summary span:first-child { color: var(--mc-muted); font-weight: 650; }
 .mc-band-row { display: grid; grid-template-columns: 56px minmax(0, 1fr); align-items: center; gap: 8px; }
 .mc-band-row > span { color: var(--mc-muted); font-size: 9px; font-weight: 650; }
 .mc-band { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(3px, 1fr); gap: 2px; height: 9px; }
@@ -141,6 +213,13 @@ function incidentTone(incident: MonitorCenterIncident): string {
 .mc-band i.good { background: var(--mc-green); }
 .mc-band i.warn { background: var(--mc-orange); }
 .mc-band i.bad { background: var(--mc-red); }
+.mc-band i.missing { background: color-mix(in srgb, var(--mc-subtle) 35%, transparent); }
+.mc-band i.incident { box-shadow: inset 0 -3px var(--mc-orange); }
+.mc-band-legend { display: flex; justify-content: flex-end; gap: 12px; color: var(--mc-subtle); font-size: 8px; }
+.mc-band-legend span { display: inline-flex; align-items: center; gap: 4px; }
+.mc-band-legend i { width: 8px; height: 8px; border-radius: 2px; background: var(--mc-green); }
+.mc-band-legend i.incident { background: linear-gradient(to bottom, var(--mc-green) 0 60%, var(--mc-orange) 60%); }
+.mc-band-legend i.missing { background: color-mix(in srgb, var(--mc-subtle) 35%, transparent); }
 .mc-band-empty { color: var(--mc-subtle); font-size: 9px; }
 .mc-incident { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; align-items: start; gap: 9px; margin-top: 11px; border-radius: 7px; padding: 10px; background: var(--mc-soft); }
 .mc-incident > svg { width: 15px; height: 15px; margin-top: 1px; }

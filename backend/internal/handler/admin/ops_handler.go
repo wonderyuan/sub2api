@@ -814,6 +814,8 @@ func parseOpsDuration(v string) (time.Duration, bool) {
 		return 6 * time.Hour, true
 	case "24h":
 		return 24 * time.Hour, true
+	case "3d":
+		return 3 * 24 * time.Hour, true
 	case "7d":
 		return 7 * 24 * time.Hour, true
 	case "30d":

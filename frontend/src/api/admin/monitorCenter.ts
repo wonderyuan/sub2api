@@ -104,6 +104,10 @@ export interface MonitorCenterRangeParams {
   end_time?: string
 }
 
+export interface MonitorCenterHistoryParams extends Omit<MonitorCenterRangeParams, 'time_range'> {
+  time_range?: MonitorCenterRangeParams['time_range'] | '3d'
+}
+
 export interface MonitorCenterRangeData {
   overview?: OpsDashboardOverview
   latency?: OpsLatencyTrendResponse
@@ -132,19 +136,19 @@ async function getOpenAIStatus(signal?: AbortSignal): Promise<MonitorCenterOpenA
 }
 
 async function getOpenAIHistory(
-  range: '1h' | '3d',
+  params: MonitorCenterHistoryParams,
   signal?: AbortSignal,
 ): Promise<MonitorCenterOpenAIHistoryResponse> {
   const { data } = await apiClient.get<MonitorCenterOpenAIHistoryResponse>('/admin/monitor-center/openai/history', {
-    params: { range },
+    params,
     signal,
   })
   return data
 }
 
-async function getProbe(range: '1h' | '3d', signal?: AbortSignal): Promise<MonitorCenterProbeResponse> {
+async function getProbe(params: MonitorCenterHistoryParams, signal?: AbortSignal): Promise<MonitorCenterProbeResponse> {
   const { data } = await apiClient.get<MonitorCenterProbeResponse>('/admin/monitor-center/probe', {
-    params: { range },
+    params,
     signal,
   })
   return data
@@ -178,8 +182,8 @@ async function getThreeDayData(signal?: AbortSignal): Promise<MonitorCenterBatch
   const params = { start_time: start.toISOString(), end_time: end.toISOString() }
   const requestOptions = { signal }
   const results = await Promise.allSettled([
-    getOpenAIHistory('3d', signal),
-    getProbe('3d', signal),
+    getOpenAIHistory(params, signal),
+    getProbe(params, signal),
     opsAPI.getErrorTrend(params, requestOptions),
     opsAPI.getThroughputTrend(params, requestOptions),
   ])
