@@ -60,6 +60,7 @@ type OpsService struct {
 	geminiCompatService         *GeminiMessagesCompatService
 	antigravityGatewayService   *AntigravityGatewayService
 	systemLogSink               *OpsSystemLogSink
+	monitorCenter               *MonitorCenterService
 	performanceSink             *OpsRequestPerformanceSink
 	ingressRejectAggregator     *OpsIngressRejectAggregator
 	authCacheInvalidationWorker *AuthCacheInvalidationWorker

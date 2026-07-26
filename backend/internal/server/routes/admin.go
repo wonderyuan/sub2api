@@ -76,6 +76,9 @@ func RegisterAdminRoutes(
 		// 运维监控（Ops）
 		registerOpsRoutes(admin, h)
 
+		// 独立运维中心
+		registerMonitorCenterRoutes(admin, h)
+
 		// 系统管理
 		registerSystemRoutes(admin, h)
 
@@ -271,6 +274,15 @@ func registerOpsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		ops.GET("/dashboard/user-error-distribution", h.Admin.Ops.GetDashboardUserErrorDistribution)
 		ops.GET("/dashboard/investigation", h.Admin.Ops.GetDashboardInvestigation)
 		ops.GET("/dashboard/openai-token-stats", h.Admin.Ops.GetDashboardOpenAITokenStats)
+	}
+}
+
+func registerMonitorCenterRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	monitorCenter := admin.Group("/monitor-center")
+	{
+		monitorCenter.GET("/openai/status", h.Admin.Ops.GetMonitorCenterOpenAIStatus)
+		monitorCenter.GET("/openai/history", h.Admin.Ops.GetMonitorCenterOpenAIHistory)
+		monitorCenter.GET("/probe", h.Admin.Ops.GetMonitorCenterProbe)
 	}
 }
 

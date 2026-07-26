@@ -573,6 +573,7 @@ func ProvideOpsService(
 	opsRepo OpsRepository,
 	settingRepo SettingRepository,
 	cfg *config.Config,
+	monitorCenter *MonitorCenterService,
 	accountRepo AccountRepository,
 	userRepo UserRepository,
 	concurrencyService *ConcurrencyService,
@@ -598,6 +599,7 @@ func ProvideOpsService(
 		antigravityGatewayService,
 		systemLogSink,
 	)
+	svc.SetMonitorCenterService(monitorCenter)
 	if settingService != nil {
 		svc.SetOpenAIQuotaAutoPauseSettingsSink(settingService.SetOpenAIQuotaAutoPauseSettings)
 		// Optional warm-up so the first scheduled request after process start observes
@@ -738,6 +740,7 @@ var ProviderSet = wire.NewSet(
 	NewDataManagementService,
 	ProvideBackupService,
 	ProvideOpsSystemLogSink,
+	ProvideMonitorCenterService,
 	ProvideOpsService,
 	ProvideOpsIngressRejectAggregator,
 	ProvideAuditLogService,

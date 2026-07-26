@@ -108,6 +108,7 @@ export interface OpsThroughputTrendResponse {
 export interface OpsLatencyTrendPoint extends OpsPercentiles {
   bucket_start: string
   sample_count: number
+  ttft: OpsPercentiles
 }
 
 export interface OpsLatencyTrendResponse {

@@ -36,7 +36,12 @@ SELECT
   percentile_cont(0.95) WITHIN GROUP (ORDER BY p.end_to_end_ms),
   AVG(p.end_to_end_ms),
   MAX(p.end_to_end_ms),
-  COUNT(*)
+  COUNT(*),
+  percentile_cont(0.50) WITHIN GROUP (ORDER BY p.time_to_first_token_ms) FILTER (WHERE p.time_to_first_token_ms > 0),
+  percentile_cont(0.90) WITHIN GROUP (ORDER BY p.time_to_first_token_ms) FILTER (WHERE p.time_to_first_token_ms > 0),
+  percentile_cont(0.95) WITHIN GROUP (ORDER BY p.time_to_first_token_ms) FILTER (WHERE p.time_to_first_token_ms > 0),
+  AVG(p.time_to_first_token_ms) FILTER (WHERE p.time_to_first_token_ms > 0),
+  MAX(p.time_to_first_token_ms) FILTER (WHERE p.time_to_first_token_ms > 0)
 FROM ops_request_performance p
 WHERE `+where+`
   AND p.logical_status_code >= 200
@@ -53,8 +58,13 @@ ORDER BY 1 ASC`, args...)
 		var bucket time.Time
 		var p50, p90, p95, avg sql.NullFloat64
 		var max sql.NullInt64
+		var ttftP50, ttftP90, ttftP95, ttftAvg sql.NullFloat64
+		var ttftMax sql.NullInt64
 		var sampleCount int64
-		if err := rows.Scan(&bucket, &p50, &p90, &p95, &avg, &max, &sampleCount); err != nil {
+		if err := rows.Scan(
+			&bucket, &p50, &p90, &p95, &avg, &max, &sampleCount,
+			&ttftP50, &ttftP90, &ttftP95, &ttftAvg, &ttftMax,
+		); err != nil {
 			return nil, err
 		}
 		point := &service.OpsLatencyTrendPoint{
@@ -63,11 +73,21 @@ ORDER BY 1 ASC`, args...)
 			P90:         floatToIntPtr(p90),
 			P95:         floatToIntPtr(p95),
 			Avg:         floatToIntPtr(avg),
+			TTFT: service.OpsPercentiles{
+				P50: floatToIntPtr(ttftP50),
+				P90: floatToIntPtr(ttftP90),
+				P95: floatToIntPtr(ttftP95),
+				Avg: floatToIntPtr(ttftAvg),
+			},
 			SampleCount: sampleCount,
 		}
 		if max.Valid {
 			value := int(max.Int64)
 			point.Max = &value
+		}
+		if ttftMax.Valid {
+			value := int(ttftMax.Int64)
+			point.TTFT.Max = &value
 		}
 		points = append(points, point)
 	}

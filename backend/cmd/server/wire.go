@@ -154,6 +154,7 @@ func provideCleanup(
 			{"OpsRuntimeSettingsRefresh", func() error {
 				if opsService != nil {
 					opsService.StopRuntimeSettingsRefresh()
+					opsService.StopMonitorCenter()
 				}
 				return nil
 			}},
