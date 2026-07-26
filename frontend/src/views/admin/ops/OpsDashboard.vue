@@ -39,20 +39,15 @@
         @exit-fullscreen="exitFullscreen"
       />
 
-      <!-- Row: Concurrency + Throughput -->
-      <div v-if="opsEnabled && !(loading && !hasLoadedOnce)" class="grid grid-cols-1 gap-6 lg:grid-cols-4">
-        <div class="lg:col-span-1 min-h-[360px]">
-          <OpsConcurrencyCard :platform-filter="platform" :group-id-filter="groupId" :refresh-token="dashboardRefreshToken" />
-        </div>
-        <div class="lg:col-span-1 h-[360px]">
-          <OpsSwitchRateTrendChart
-            :points="switchTrend?.points ?? []"
-            :loading="loadingSwitchTrend"
-            :time-range="switchTrendTimeRange"
-            :fullscreen="isFullscreen"
+      <div v-if="opsEnabled && !(loading && !hasLoadedOnce)" class="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <div class="h-[360px]">
+          <OpsResponseTimeTrendChart
+            :points="latencyTrend?.points ?? []"
+            :loading="loadingLatencyTrend"
+            :time-range="timeRange"
           />
         </div>
-        <div class="lg:col-span-2 h-[360px]">
+        <div class="h-[360px]">
           <OpsThroughputTrendChart
             :points="throughputTrend?.points ?? []"
             :by-platform="throughputTrend?.by_platform ?? []"
@@ -67,69 +62,90 @@
         </div>
       </div>
 
+      <div v-if="opsEnabled && !(loading && !hasLoadedOnce)" class="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <div class="min-h-[360px]">
+          <OpsConcurrencyCard :platform-filter="platform" :group-id-filter="groupId" :refresh-token="dashboardRefreshToken" />
+        </div>
+        <div class="h-[360px]">
+          <OpsSwitchRateTrendChart
+            :points="switchTrend?.points ?? []"
+            :loading="loadingSwitchTrend"
+            :time-range="switchTrendTimeRange"
+            :fullscreen="isFullscreen"
+          />
+        </div>
+      </div>
+
       <OpsUserConcurrencyTrendChart
         v-if="opsEnabled && !(loading && !hasLoadedOnce)"
         :refresh-token="dashboardRefreshToken"
+        :time-range="timeRange"
+        :custom-start-time="customStartTime"
+        :custom-end-time="customEndTime"
       />
 
-      <!-- Row: Visual Analysis -->
-      <div v-if="opsEnabled && !(loading && !hasLoadedOnce)" class="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
-        <OpsLatencyChart
-          class="md:col-span-2"
-          :latency-data="latencyHistogram"
-          :loading="loadingLatency"
-          :user-id="selectedLatencyUserId"
-          @update:user-id="handleLatencyUserChange"
-          @open-details="handleOpenRequestDetails"
-        />
-        <OpsErrorDistributionChart
-          :data="errorDistribution"
-          :loading="loadingErrorDistribution"
-          @open-details="openErrorDetails('request')"
-        />
-        <OpsErrorTrendChart
-          :points="errorTrend?.points ?? []"
-          :loading="loadingErrorTrend"
-          :time-range="timeRange"
-          @open-request-errors="openErrorDetails('request')"
-          @open-upstream-errors="openErrorDetails('upstream')"
-        />
-      </div>
+      <OpsPerformanceDiagnosticsPanel
+        v-if="opsEnabled && !(loading && !hasLoadedOnce)"
+        :data="performanceDiagnostics"
+        :loading="loadingPerformanceDiagnostics"
+        :time-range="timeRange"
+      />
 
-      <!-- Row: OpenAI Token Stats -->
-      <div v-if="opsEnabled && showOpenAITokenStats && !(loading && !hasLoadedOnce)" class="grid grid-cols-1 gap-6">
-        <OpsOpenAITokenStatsCard
-          :platform-filter="platform"
-          :group-id-filter="groupId"
-          :refresh-token="dashboardRefreshToken"
-        />
-      </div>
-
-      <!-- Row: Investigation + user error distribution + response time trend -->
-      <div v-if="opsEnabled && !(loading && !hasLoadedOnce)" class="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        <div class="min-h-[360px] lg:col-span-1">
-          <OpsInvestigationCard
-            class="h-full"
-            :data="investigation"
-            :loading="loadingInvestigation"
-            @open-error-details="openErrorDetails"
+      <details v-if="opsEnabled && !(loading && !hasLoadedOnce)" class="border-t border-gray-200 pt-4 dark:border-dark-700">
+        <summary class="cursor-pointer text-sm font-semibold text-gray-700 dark:text-gray-200">
+          {{ t('admin.ops.performance.detailedAnalysis') }}
+        </summary>
+        <div class="mt-5 grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
+          <OpsLatencyChart
+            class="md:col-span-2"
+            :latency-data="latencyHistogram"
+            :loading="loadingLatency"
+            :user-id="selectedLatencyUserId"
+            @update:user-id="handleLatencyUserChange"
+            @open-details="handleOpenRequestDetails"
           />
-        </div>
-        <div class="min-h-[360px] lg:col-span-1">
-          <OpsUserErrorDistributionChart
-            :data="userErrorDistribution"
-            :loading="loadingUserErrorDistribution"
-            @open-details="handleUserErrorDetails"
+          <OpsErrorDistributionChart
+            :data="errorDistribution"
+            :loading="loadingErrorDistribution"
+            @open-details="openErrorDetails('request')"
           />
-        </div>
-        <div class="min-h-[360px] lg:col-span-1">
-          <OpsResponseTimeTrendChart
-            :points="latencyTrend?.points ?? []"
-            :loading="loadingLatencyTrend"
+          <OpsErrorTrendChart
+            :points="errorTrend?.points ?? []"
+            :loading="loadingErrorTrend"
             :time-range="timeRange"
+            @open-request-errors="openErrorDetails('request')"
+            @open-upstream-errors="openErrorDetails('upstream')"
           />
         </div>
-      </div>
+
+        <!-- Row: OpenAI Token Stats -->
+        <div v-if="opsEnabled && showOpenAITokenStats && !(loading && !hasLoadedOnce)" class="grid grid-cols-1 gap-6">
+          <OpsOpenAITokenStatsCard
+            :platform-filter="platform"
+            :group-id-filter="groupId"
+            :refresh-token="dashboardRefreshToken"
+          />
+        </div>
+
+        <!-- Row: Investigation + user error distribution -->
+        <div class="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+          <div class="min-h-[360px]">
+            <OpsInvestigationCard
+              class="h-full"
+              :data="investigation"
+              :loading="loadingInvestigation"
+              @open-error-details="openErrorDetails"
+            />
+          </div>
+          <div class="min-h-[360px]">
+            <OpsUserErrorDistributionChart
+              :data="userErrorDistribution"
+              :loading="loadingUserErrorDistribution"
+              @open-details="handleUserErrorDetails"
+            />
+          </div>
+        </div>
+      </details>
 
       <OpsAlertEventsCard v-if="opsEnabled && showAlertEvents && !(loading && !hasLoadedOnce)" />
 
@@ -190,6 +206,7 @@ import {
   type OpsInvestigationResponse,
   type OpsLatencyHistogramResponse,
   type OpsLatencyTrendResponse,
+  type OpsPerformanceDiagnosticsResponse,
   type OpsUserErrorDistributionResponse,
   type OpsThroughputTrendResponse,
   type OpsMetricThresholds
@@ -206,6 +223,7 @@ import OpsErrorDetailsModal from './components/OpsErrorDetailsModal.vue'
 import OpsErrorTrendChart from './components/OpsErrorTrendChart.vue'
 import OpsLatencyChart from './components/OpsLatencyChart.vue'
 import OpsResponseTimeTrendChart from './components/OpsResponseTimeTrendChart.vue'
+import OpsPerformanceDiagnosticsPanel from './components/OpsPerformanceDiagnosticsPanel.vue'
 import OpsUserErrorDistributionChart from './components/OpsUserErrorDistributionChart.vue'
 import OpsThroughputTrendChart from './components/OpsThroughputTrendChart.vue'
 import OpsSwitchRateTrendChart from './components/OpsSwitchRateTrendChart.vue'
@@ -406,6 +424,9 @@ let latencyRequestSeq = 0
 
 const latencyTrend = ref<OpsLatencyTrendResponse | null>(null)
 const loadingLatencyTrend = ref(false)
+
+const performanceDiagnostics = ref<OpsPerformanceDiagnosticsResponse | null>(null)
+const loadingPerformanceDiagnostics = ref(false)
 
 const errorTrend = ref<OpsErrorTrendResponse | null>(null)
 const loadingErrorTrend = ref(false)
@@ -734,6 +755,22 @@ async function refreshLatencyTrendWithCancel(fetchSeq: number, signal: AbortSign
   }
 }
 
+async function refreshPerformanceDiagnosticsWithCancel(fetchSeq: number, signal: AbortSignal) {
+  if (!opsEnabled.value) return
+  loadingPerformanceDiagnostics.value = true
+  try {
+    const data = await opsAPI.getPerformanceDiagnostics(buildApiParams(), { signal })
+    if (fetchSeq !== dashboardFetchSeq) return
+    performanceDiagnostics.value = data
+  } catch (err: any) {
+    if (fetchSeq !== dashboardFetchSeq || isCanceledRequest(err)) return
+    performanceDiagnostics.value = null
+    appStore.showError(err?.message || t('admin.ops.failedToLoadPerformanceDiagnostics'))
+  } finally {
+    if (fetchSeq === dashboardFetchSeq) loadingPerformanceDiagnostics.value = false
+  }
+}
+
 async function refreshErrorTrendWithCancel(fetchSeq: number, signal: AbortSignal) {
   if (!opsEnabled.value) return
   loadingErrorTrend.value = true
@@ -808,7 +845,6 @@ async function refreshDeferredPanels(fetchSeq: number, signal: AbortSignal) {
   if (!opsEnabled.value) return
   await Promise.all([
     refreshLatencyHistogramWithCancel(fetchSeq, signal),
-    refreshLatencyTrendWithCancel(fetchSeq, signal),
     refreshErrorDistributionWithCancel(fetchSeq, signal),
     refreshUserErrorDistributionWithCancel(fetchSeq, signal),
     refreshInvestigationWithCancel(fetchSeq, signal)
@@ -839,6 +875,8 @@ async function fetchData() {
     await Promise.all([
       refreshCoreSnapshotWithCancel(fetchSeq, dashboardFetchController.signal),
       refreshSwitchTrendWithCancel(fetchSeq, dashboardFetchController.signal),
+      refreshLatencyTrendWithCancel(fetchSeq, dashboardFetchController.signal),
+      refreshPerformanceDiagnosticsWithCancel(fetchSeq, dashboardFetchController.signal)
     ])
     if (fetchSeq !== dashboardFetchSeq) return
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Chart as ChartJS, CategoryScale, Legend, LineElement, LinearScale, PointElement, Tooltip } from 'chart.js'
 import { Line } from 'vue-chartjs'
@@ -18,6 +18,9 @@ ChartJS.register(CategoryScale, Legend, LineElement, LinearScale, PointElement, 
 
 interface Props {
   refreshToken?: number
+  timeRange: string
+  customStartTime?: string | null
+  customEndTime?: string | null
 }
 
 type LaneKey = 'normal' | 'heavy' | 'recovery'
@@ -29,7 +32,11 @@ interface LaneDefinition {
   queueColor: string
 }
 
-const props = withDefaults(defineProps<Props>(), { refreshToken: 0 })
+const props = withDefaults(defineProps<Props>(), {
+  refreshToken: 0,
+  customStartTime: null,
+  customEndTime: null
+})
 const { t } = useI18n()
 
 const loading = ref(false)
@@ -37,6 +44,20 @@ const errorMessage = ref('')
 const trend = ref<OpsUserConcurrencyTrendResponse | null>(null)
 const selectedUserId = ref('')
 const pinnedUserIds = ref<string[]>([])
+let loadController: AbortController | null = null
+let loadSequence = 0
+
+const coverageWarning = computed(() => {
+  const value = trend.value
+  if (!value || value.coverage_complete) return ''
+  if (value.coverage_start && value.coverage_end) {
+    return t('admin.ops.concurrencyTrend.partialCoverage', {
+      start: new Date(value.coverage_start).toLocaleString(),
+      end: new Date(value.coverage_end).toLocaleString()
+    })
+  }
+  return t('admin.ops.concurrencyTrend.unavailableCoverage')
+})
 
 const palette = ['#2563eb', '#059669', '#d97706', '#dc2626', '#7c3aed', '#0891b2', '#db2777', '#4f46e5', '#65a30d', '#ea580c']
 
@@ -282,22 +303,44 @@ function removePinnedUser(userId: string) {
 }
 
 async function loadData() {
+  loadController?.abort()
+  const sequence = ++loadSequence
+  const controller = new AbortController()
+  loadController = controller
   loading.value = true
   errorMessage.value = ''
   try {
-    trend.value = await opsAPI.getUserConcurrencyTrend()
+    const params: Parameters<typeof opsAPI.getUserConcurrencyTrend>[0] = {}
+    if (props.timeRange === 'custom' && props.customStartTime && props.customEndTime) {
+      params.start_time = props.customStartTime
+      params.end_time = props.customEndTime
+    } else if (props.timeRange !== 'custom') {
+      params.time_range = props.timeRange as '5m' | '30m' | '1h' | '6h' | '24h'
+    }
+    const data = await opsAPI.getUserConcurrencyTrend(params, { signal: controller.signal })
+    if (sequence !== loadSequence) return
+    trend.value = data
     const validUsers = new Set(Object.keys(trend.value.users || {}))
     pinnedUserIds.value = pinnedUserIds.value.filter(userId => validUsers.has(userId))
   } catch (error: any) {
+    if (sequence !== loadSequence || error?.code === 'ERR_CANCELED' || error?.name === 'AbortError') return
     console.error('[OpsUserConcurrencyTrend] Failed to load data', error)
     errorMessage.value = error?.response?.data?.detail || t('admin.ops.concurrencyTrend.loadFailed')
   } finally {
-    loading.value = false
+    if (sequence === loadSequence) {
+      loadController = null
+      loading.value = false
+    }
   }
 }
 
 watch(() => props.refreshToken, loadData)
 onMounted(loadData)
+onBeforeUnmount(() => {
+  loadSequence++
+  loadController?.abort()
+  loadController = null
+})
 </script>
 
 <template>
@@ -349,6 +392,9 @@ onMounted(loadData)
 
     <div v-if="errorMessage" class="mb-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600 dark:bg-red-900/20 dark:text-red-400">
       {{ errorMessage }}
+    </div>
+    <div v-else-if="coverageWarning" class="mb-3 border-l-2 border-amber-500 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
+      {{ coverageWarning }}
     </div>
 
     <div class="grid min-h-0 flex-1 grid-cols-1 border-t border-gray-100 lg:grid-cols-3 dark:border-dark-700">

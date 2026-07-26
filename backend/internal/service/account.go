@@ -2630,7 +2630,8 @@ const (
 	DefaultRequestBodyRecoveryLimitBytes  = int64(32 * 1024 * 1024)
 	MaxRequestBodyRecoveryLimitBytes      = int64(32 * 1024 * 1024)
 	MaxRequestBodyAdmissionLimitBytes     = int64(64 * 1024 * 1024)
-	RequestBodyHeavyConcurrencyPercentage = 20
+	RequestBodyRecoveryGlobalConcurrency  = 2
+	RequestBodyRecoveryAccountConcurrency = 1
 )
 
 type RequestBodyLane string
@@ -2692,7 +2693,7 @@ func positiveExtraInt64(v any) int64 {
 
 // Classify reserves the recovery lane for explicit compact requests. Ordinary
 // requests above the heavy threshold must compact first instead of consuming
-// the single global recovery slot.
+// the bounded global recovery lane.
 func (p RequestBodyAdmissionPolicy) Classify(bodyBytes int64, compactRequest bool) RequestBodyLane {
 	if !p.Enabled {
 		return RequestBodyLaneDisabled
@@ -2715,15 +2716,24 @@ func (p RequestBodyAdmissionPolicy) Classify(bodyBytes int64, compactRequest boo
 	return RequestBodyLaneRejected
 }
 
-func RequestBodyHeavyConcurrencyLimit(accountConcurrency int) int {
+func RequestBodyHeavyConcurrencyLimit(_ int) int {
+	// Heavy requests are deliberately serialized per account. Large payloads
+	// compete for the same upstream connection and provider capacity even when
+	// the account's nominal request concurrency is higher.
+	return 1
+}
+
+func RequestBodyLargeAccountConcurrencyLimit(accountConcurrency int) int {
 	if accountConcurrency <= 0 {
+		return 0
+	}
+	if accountConcurrency == 1 {
 		return 1
 	}
-	limit := accountConcurrency * RequestBodyHeavyConcurrencyPercentage / 100
-	if limit < 1 {
-		return 1
-	}
-	return limit
+	// Large requests use the same physical account pool as ordinary traffic.
+	// Keeping one account slot outside their ceiling guarantees ordinary work can
+	// still enter while heavy/recovery work is active.
+	return accountConcurrency - 1
 }
 
 // RequestBodyLaneWaitLimit bounds materialized request bodies waiting in one

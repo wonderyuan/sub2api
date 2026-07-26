@@ -494,6 +494,9 @@ func detachUpstreamContext(ctx context.Context) (context.Context, context.Cancel
 	if ctx == nil {
 		return context.Background(), func() {}
 	}
+	if upstreamCtx, ok := RequestBodyAdmissionUpstreamContext(ctx); ok {
+		return upstreamCtx, func() {}
+	}
 	return context.WithoutCancel(ctx), func() {}
 }
 

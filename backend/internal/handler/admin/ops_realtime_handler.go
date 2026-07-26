@@ -108,7 +108,7 @@ func (h *OpsHandler) GetUserConcurrencyStats(c *gin.Context) {
 	response.Success(c, payload)
 }
 
-// GetUserConcurrencyTrend returns per-minute user concurrency peaks for the last hour.
+// GetUserConcurrencyTrend returns selected-range user concurrency peaks.
 // GET /api/v1/admin/ops/user-concurrency-trend
 func (h *OpsHandler) GetUserConcurrencyTrend(c *gin.Context) {
 	if h.opsService == nil {
@@ -121,18 +121,24 @@ func (h *OpsHandler) GetUserConcurrencyTrend(c *gin.Context) {
 	}
 	if !h.opsService.IsRealtimeMonitoringEnabled(c.Request.Context()) {
 		response.Success(c, gin.H{
-			"enabled":       false,
-			"bucket":        "minute",
-			"current":       service.ConcurrencySnapshot{},
-			"current_lanes": service.ConcurrencyLaneSnapshots{},
-			"latency_lanes": service.RequestBodyLaneLatencySummaries{},
-			"points":        []service.UserConcurrencyTrendPoint{},
-			"users":         map[int64]service.UserConcurrencyTrendUser{},
+			"enabled":           false,
+			"coverage_complete": false,
+			"bucket":            "minute",
+			"current":           service.ConcurrencySnapshot{},
+			"current_lanes":     service.ConcurrencyLaneSnapshots{},
+			"latency_lanes":     service.RequestBodyLaneLatencySummaries{},
+			"points":            []service.UserConcurrencyTrendPoint{},
+			"users":             map[int64]service.UserConcurrencyTrendUser{},
 		})
 		return
 	}
+	startTime, endTime, err := parseOpsTimeRange(c, "1h")
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
 
-	trend, err := h.opsService.GetUserConcurrencyTrend(c.Request.Context())
+	trend, err := h.opsService.GetUserConcurrencyTrend(c.Request.Context(), startTime, endTime)
 	if err != nil {
 		if isOpsRealtimeRequestCanceled(c, err) {
 			return
@@ -141,16 +147,19 @@ func (h *OpsHandler) GetUserConcurrencyTrend(c *gin.Context) {
 		return
 	}
 	response.Success(c, gin.H{
-		"enabled":       true,
-		"start_time":    trend.StartTime,
-		"end_time":      trend.EndTime,
-		"bucket":        trend.Bucket,
-		"current":       trend.Current,
-		"current_lanes": trend.CurrentLanes,
-		"latency_lanes": trend.LatencyLanes,
-		"points":        trend.Points,
-		"users":         trend.Users,
-		"timestamp":     time.Now().UTC(),
+		"enabled":           true,
+		"start_time":        trend.StartTime,
+		"end_time":          trend.EndTime,
+		"coverage_start":    trend.CoverageStart,
+		"coverage_end":      trend.CoverageEnd,
+		"coverage_complete": trend.CoverageComplete,
+		"bucket":            trend.Bucket,
+		"current":           trend.Current,
+		"current_lanes":     trend.CurrentLanes,
+		"latency_lanes":     trend.LatencyLanes,
+		"points":            trend.Points,
+		"users":             trend.Users,
+		"timestamp":         time.Now().UTC(),
 	})
 }
 

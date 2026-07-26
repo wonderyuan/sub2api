@@ -25,22 +25,22 @@ func (r *opsRepository) GetLatencyTrend(ctx context.Context, filter *service.Ops
 	}
 	start := filter.StartTime.UTC()
 	end := filter.EndTime.UTC()
-	usageJoin, usageWhere, args, _ := buildUsageWhere(filter, start, end, 1)
-	bucketExpr := opsBucketExprForUsage(bucketSeconds)
+	where, args := performanceWhere(filter)
+	bucketExpr := opsPerformanceBucketExpr(bucketSeconds)
 
 	rows, err := r.db.QueryContext(ctx, `
 SELECT
   `+bucketExpr+` AS bucket,
-  percentile_cont(0.50) WITHIN GROUP (ORDER BY duration_ms),
-  percentile_cont(0.90) WITHIN GROUP (ORDER BY duration_ms),
-  percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms),
-  AVG(duration_ms),
-  MAX(duration_ms),
+  percentile_cont(0.50) WITHIN GROUP (ORDER BY p.end_to_end_ms),
+  percentile_cont(0.90) WITHIN GROUP (ORDER BY p.end_to_end_ms),
+  percentile_cont(0.95) WITHIN GROUP (ORDER BY p.end_to_end_ms),
+  AVG(p.end_to_end_ms),
+  MAX(p.end_to_end_ms),
   COUNT(*)
-FROM usage_logs ul
-`+usageJoin+`
-`+usageWhere+`
-  AND duration_ms IS NOT NULL
+FROM ops_request_performance p
+WHERE `+where+`
+  AND p.logical_status_code >= 200
+  AND p.logical_status_code < 400
 GROUP BY 1
 ORDER BY 1 ASC`, args...)
 	if err != nil {
@@ -79,6 +79,17 @@ ORDER BY 1 ASC`, args...)
 		Bucket: opsBucketLabel(bucketSeconds),
 		Points: fillOpsLatencyBuckets(start, end, bucketSeconds, points),
 	}, nil
+}
+
+func opsPerformanceBucketExpr(bucketSeconds int) string {
+	switch bucketSeconds {
+	case 3600:
+		return "date_trunc('hour', p.created_at)"
+	case 300:
+		return "to_timestamp(floor(extract(epoch from p.created_at) / 300) * 300)"
+	default:
+		return "date_trunc('minute', p.created_at)"
+	}
 }
 
 func fillOpsLatencyBuckets(start, end time.Time, bucketSeconds int, points []*service.OpsLatencyTrendPoint) []*service.OpsLatencyTrendPoint {

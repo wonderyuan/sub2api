@@ -606,6 +606,10 @@ func ProvideOpsService(
 	}
 	svc.authCacheInvalidationWorker = authCacheInvalidationWorker
 	svc.apiKeyService = apiKeyService
+	if performanceRepo, ok := opsRepo.(opsRequestPerformanceBatchRepository); ok {
+		svc.performanceSink = NewOpsRequestPerformanceSink(performanceRepo)
+		svc.performanceSink.Start()
+	}
 	svc.StartRuntimeSettingsRefresh(context.Background())
 	return svc
 }

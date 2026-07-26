@@ -19,7 +19,7 @@ func TestGetLatencyTrendReturnsPercentilesAndFillsMissingBuckets(t *testing.T) {
 
 	rows := sqlmock.NewRows([]string{"bucket", "p50", "p90", "p95", "avg", "max", "sample_count"}).
 		AddRow(start, 100.4, 250.2, 400.8, 175.5, int64(900), int64(12))
-	mock.ExpectQuery(`(?s)SELECT.*percentile_cont\(0\.50\).*FROM usage_logs ul.*duration_ms IS NOT NULL.*GROUP BY 1`).
+	mock.ExpectQuery(`(?s)SELECT.*percentile_cont\(0\.50\).*FROM ops_request_performance p.*logical_status_code >= 200.*logical_status_code < 400.*GROUP BY 1`).
 		WithArgs(start, end, groupID).
 		WillReturnRows(rows)
 

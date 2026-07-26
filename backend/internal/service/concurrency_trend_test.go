@@ -42,14 +42,83 @@ func TestRecordConcurrencyTrendSampleKeepsPerUserAndSystemPeaks(t *testing.T) {
 
 func TestConcurrencyServiceReturnsSixtyEmptyBucketsWithoutTrendCache(t *testing.T) {
 	svc := NewConcurrencyService(nil)
-	now := time.Date(2026, 7, 19, 12, 34, 45, 0, time.UTC)
+	now := time.Now().UTC().Truncate(time.Second)
 
-	trend, err := svc.GetUserConcurrencyTrend(t.Context(), now)
+	trend, err := svc.GetUserConcurrencyTrend(t.Context(), now.Add(-59*time.Minute), now)
 	require.NoError(t, err)
 	require.Equal(t, "minute", trend.Bucket)
 	require.Len(t, trend.Points, 60)
 	require.Equal(t, now.Truncate(time.Minute).Add(-59*time.Minute), trend.Points[0].BucketStart)
 	require.Equal(t, now.Truncate(time.Minute), trend.Points[59].BucketStart)
+}
+
+func TestConcurrencyServiceReturnsUnavailableForExpiredRange(t *testing.T) {
+	svc := NewConcurrencyService(nil)
+	now := time.Now().UTC().Truncate(time.Minute)
+
+	trend, err := svc.GetUserConcurrencyTrend(t.Context(), now.Add(-72*time.Hour), now.Add(-48*time.Hour))
+
+	require.NoError(t, err)
+	require.Equal(t, "5m", trend.Bucket)
+	require.Equal(t, now.Add(-72*time.Hour), trend.StartTime)
+	require.Equal(t, now.Add(-48*time.Hour), trend.EndTime)
+	require.Empty(t, trend.Points)
+	require.False(t, trend.CoverageComplete)
+	require.Nil(t, trend.CoverageStart)
+	require.Nil(t, trend.CoverageEnd)
+}
+
+func TestConcurrencyServiceClampsPartiallyExpiredRangeToRetentionWindow(t *testing.T) {
+	svc := NewConcurrencyService(nil)
+	now := time.Now().UTC().Truncate(time.Minute)
+	requestedStart := now.Add(-30 * time.Hour)
+	requestedEnd := now.Add(-23 * time.Hour)
+
+	trend, err := svc.GetUserConcurrencyTrend(t.Context(), requestedStart, requestedEnd)
+
+	require.NoError(t, err)
+	require.Equal(t, requestedStart, trend.StartTime)
+	require.Equal(t, requestedEnd, trend.EndTime)
+	require.Equal(t, "5m", trend.Bucket)
+	require.False(t, trend.CoverageComplete)
+	require.NotNil(t, trend.CoverageStart)
+	require.NotNil(t, trend.CoverageEnd)
+	require.Equal(t, requestedEnd, *trend.CoverageEnd)
+	require.WithinDuration(t, now.Add(-24*time.Hour), *trend.CoverageStart, time.Minute)
+	require.NotEmpty(t, trend.Points)
+	for _, point := range trend.Points {
+		require.False(t, point.BucketStart.Before(trend.CoverageStart.Truncate(5*time.Minute)))
+		require.False(t, point.BucketStart.After(requestedEnd))
+	}
+}
+
+func TestConcurrencyTrendAggregatesFiveMinutePeaksForLongRanges(t *testing.T) {
+	start := time.Date(2026, 7, 19, 0, 0, 0, 0, time.UTC)
+	coverageStart := start.Add(time.Minute)
+	coverageEnd := start.Add(5 * time.Minute)
+	trend := &UserConcurrencyTrend{
+		StartTime:        start,
+		EndTime:          start.Add(5 * time.Minute),
+		CoverageStart:    &coverageStart,
+		CoverageEnd:      &coverageEnd,
+		CoverageComplete: false,
+		Bucket:           "minute",
+		Points: []UserConcurrencyTrendPoint{
+			{BucketStart: start, System: ConcurrencyPeak{PeakDemand: 2}, SystemLanes: ConcurrencyLanePeaks{Heavy: ConcurrencyPeak{PeakWaiting: 1}}},
+			{BucketStart: start.Add(4 * time.Minute), System: ConcurrencyPeak{PeakDemand: 7}, SystemLanes: ConcurrencyLanePeaks{Heavy: ConcurrencyPeak{PeakWaiting: 3}}},
+			{BucketStart: start.Add(5 * time.Minute), System: ConcurrencyPeak{PeakDemand: 4}},
+		},
+	}
+
+	aggregated := aggregateUserConcurrencyTrend(trend, 5*time.Minute)
+	require.Equal(t, "5m", aggregated.Bucket)
+	require.Len(t, aggregated.Points, 2)
+	require.Equal(t, 7, aggregated.Points[0].System.PeakDemand)
+	require.Equal(t, 3, aggregated.Points[0].SystemLanes.Heavy.PeakWaiting)
+	require.Equal(t, 4, aggregated.Points[1].System.PeakDemand)
+	require.Equal(t, &coverageStart, aggregated.CoverageStart)
+	require.Equal(t, &coverageEnd, aggregated.CoverageEnd)
+	require.False(t, aggregated.CoverageComplete)
 }
 
 func TestRequestBodyClassificationTransitionsDoNotInflateNormalLanePeak(t *testing.T) {
@@ -95,4 +164,19 @@ func TestPendingUserWaitIsExcludedFromNormalLane(t *testing.T) {
 	lanes := concurrencyLaneSnapshotsForState(state)
 	require.Equal(t, 3, lanes.Normal.InUse)
 	require.Zero(t, lanes.Normal.Waiting)
+}
+
+func TestActiveLargeLaneRemainsExcludedFromNormalWhenPendingMarkerExpires(t *testing.T) {
+	state := userConcurrencyLiveState{
+		active: 2,
+		requestBodyLoad: RequestBodyLaneUserLoad{
+			HeavyActive: 1,
+		},
+	}
+
+	lanes := concurrencyLaneSnapshotsForState(state)
+
+	require.Equal(t, 1, lanes.Normal.InUse)
+	require.Equal(t, 1, lanes.Heavy.InUse)
+	require.Equal(t, 2, lanes.Normal.Demand+lanes.Heavy.Demand+lanes.Recovery.Demand)
 }

@@ -115,6 +115,59 @@ export interface OpsLatencyTrendResponse {
   points: OpsLatencyTrendPoint[]
 }
 
+export interface OpsPerformanceSummary {
+  sample_count: number
+  slow_count: number
+  slow_rate: number
+  end_to_end: OpsPercentiles
+  ttft: OpsPercentiles
+}
+
+export interface OpsSlowCauseSummary {
+  cause: string
+  count: number
+  share: number
+  e2e_p95_ms?: number | null
+  queue_p95_ms?: number | null
+  ttft_p95_ms?: number | null
+}
+
+export interface OpsSlowCauseTrendPoint {
+  bucket_start: string
+  causes: Record<string, number>
+}
+
+export interface OpsPerformanceImpact {
+  dimension: 'user' | 'account' | 'model' | string
+  id: string
+  name: string
+  request_count: number
+  slow_rate: number
+  e2e_p95_ms?: number | null
+  ttft_p95_ms?: number | null
+  queue_p95_ms?: number | null
+  main_cause: string
+}
+
+export interface OpsPerformanceIngestionHealth {
+  queue_depth: number
+  queue_capacity: number
+  dropped_count: number
+  write_failed_count: number
+  written_count: number
+}
+
+export interface OpsPerformanceDiagnosticsResponse {
+  start_time: string
+  end_time: string
+  bucket: string
+  summary: OpsPerformanceSummary
+  causes: OpsSlowCauseSummary[]
+  trend: OpsSlowCauseTrendPoint[]
+  impacts: OpsPerformanceImpact[]
+  ingestion_health: OpsPerformanceIngestionHealth
+}
+
 export type OpsRequestKind = 'success' | 'error'
 export type OpsRequestDetailsKind = OpsRequestKind | 'all'
 export type OpsRequestDetailsSort = 'created_at_desc' | 'duration_desc'
@@ -462,7 +515,10 @@ export interface OpsUserConcurrencyTrendResponse {
   enabled: boolean
   start_time?: string
   end_time?: string
-  bucket: 'minute'
+  coverage_start?: string | null
+  coverage_end?: string | null
+  coverage_complete: boolean
+  bucket: 'minute' | '5m'
   current: ConcurrencySnapshot
   current_lanes?: ConcurrencyLaneSnapshots
   latency_lanes?: RequestBodyLaneLatencySummaries
@@ -489,8 +545,15 @@ export async function getUserConcurrencyStats(): Promise<OpsUserConcurrencyStats
   return data
 }
 
-export async function getUserConcurrencyTrend(): Promise<OpsUserConcurrencyTrendResponse> {
-  const { data } = await apiClient.get<OpsUserConcurrencyTrendResponse>('/admin/ops/user-concurrency-trend')
+export async function getUserConcurrencyTrend(params: {
+  time_range?: '5m' | '30m' | '1h' | '6h' | '24h'
+  start_time?: string
+  end_time?: string
+} = {}, options: OpsRequestOptions = {}): Promise<OpsUserConcurrencyTrendResponse> {
+  const { data } = await apiClient.get<OpsUserConcurrencyTrendResponse>('/admin/ops/user-concurrency-trend', {
+    params,
+    signal: options.signal
+  })
   return data
 }
 
@@ -1170,6 +1233,24 @@ export async function getLatencyTrend(
   return data
 }
 
+export async function getPerformanceDiagnostics(
+  params: {
+    time_range?: '5m' | '30m' | '1h' | '6h' | '24h'
+    start_time?: string
+    end_time?: string
+    platform?: string
+    group_id?: number | null
+    mode?: OpsQueryMode
+  },
+  options: OpsRequestOptions = {}
+): Promise<OpsPerformanceDiagnosticsResponse> {
+  const { data } = await apiClient.get<OpsPerformanceDiagnosticsResponse>('/admin/ops/dashboard/performance-diagnostics', {
+    params,
+    signal: options.signal
+  })
+  return data
+}
+
 export async function getLatencyHistogram(
   params: {
   time_range?: '5m' | '30m' | '1h' | '6h' | '24h'
@@ -1504,6 +1585,7 @@ export const opsAPI = {
   getDashboardOverview,
   getThroughputTrend,
   getLatencyTrend,
+  getPerformanceDiagnostics,
   getLatencyHistogram,
   getErrorTrend,
   getErrorDistribution,

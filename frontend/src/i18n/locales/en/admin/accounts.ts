@@ -802,7 +802,7 @@ export default {
       requestBodyNormalLimit: 'Normal channel max (MB)',
       requestBodyHeavyLimit: 'Heavy channel max (MB)',
       requestBodyRecoveryLimit: 'Recovery channel max (MB)',
-      requestBodyAdmissionCapacityHint: 'Heavy requests use at most 20% of account concurrency; ordinary requests above the heavy limit are rejected. The recovery channel is reserved for remote compaction and has one global slot and one global waiter.',
+      requestBodyAdmissionCapacityHint: 'The heavy lane runs at most one request per account; ordinary requests above the heavy size limit are rejected. The recovery lane is reserved for remote compaction, with two active and two waiting requests globally and at most one active request per account.',
       requestBodyAdmissionInvalid: 'Request body limits must be positive, satisfy normal < heavy < recovery, and keep the recovery limit at or below 32 MB.',
       expiresAt: 'Expires At',
       expiresAtHint: 'Leave empty for no expiration',

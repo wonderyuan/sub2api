@@ -15,15 +15,16 @@ func (r *opsRepository) GetRequestBodyLaneLatencySummaries(
 	rows, err := r.db.QueryContext(ctx, `
 SELECT
   request_body_lane,
-  percentile_cont(0.50) WITHIN GROUP (ORDER BY duration_ms),
-  percentile_cont(0.90) WITHIN GROUP (ORDER BY duration_ms),
-  percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms),
-  AVG(duration_ms),
-  MAX(duration_ms)
-FROM usage_logs
+  percentile_cont(0.50) WITHIN GROUP (ORDER BY end_to_end_ms),
+  percentile_cont(0.90) WITHIN GROUP (ORDER BY end_to_end_ms),
+  percentile_cont(0.95) WITHIN GROUP (ORDER BY end_to_end_ms),
+  AVG(end_to_end_ms),
+  MAX(end_to_end_ms)
+FROM ops_request_performance
 WHERE created_at >= $1
-  AND created_at <= $2
-  AND duration_ms IS NOT NULL
+  AND created_at < $2
+  AND logical_status_code >= 200
+  AND logical_status_code < 400
   AND request_body_lane IN ('normal', 'heavy', 'recovery')
 GROUP BY request_body_lane
 `, start, end)

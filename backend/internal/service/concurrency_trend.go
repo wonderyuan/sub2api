@@ -48,10 +48,13 @@ type UserConcurrencyTrendPoint struct {
 }
 
 type UserConcurrencyTrend struct {
-	StartTime time.Time                   `json:"start_time"`
-	EndTime   time.Time                   `json:"end_time"`
-	Bucket    string                      `json:"bucket"`
-	Points    []UserConcurrencyTrendPoint `json:"points"`
+	StartTime        time.Time                   `json:"start_time"`
+	EndTime          time.Time                   `json:"end_time"`
+	CoverageStart    *time.Time                  `json:"coverage_start,omitempty"`
+	CoverageEnd      *time.Time                  `json:"coverage_end,omitempty"`
+	CoverageComplete bool                        `json:"coverage_complete"`
+	Bucket           string                      `json:"bucket"`
+	Points           []UserConcurrencyTrendPoint `json:"points"`
 }
 
 // UserConcurrencyTrendCache is implemented by Redis-backed concurrency caches.
@@ -259,9 +262,6 @@ func recordConcurrencyTrendSample(
 	totalWaiting int,
 	totalLanes ConcurrencyLaneSnapshots,
 ) {
-	if totalActive <= 0 && totalWaiting <= 0 && concurrencyLaneSnapshotsDemand(totalLanes) <= 0 && len(live) == 0 {
-		return
-	}
 	bucket := at.UTC().Truncate(time.Minute)
 	users := pending[bucket]
 	if users == nil {
@@ -313,7 +313,12 @@ func concurrencyLaneSnapshotsForState(state userConcurrencyLiveState) Concurrenc
 	// policy classification is pending and throughout heavy/recovery handling.
 	// This prevents acquisition and failover transitions from appearing as
 	// short-lived normal traffic.
-	normalActive := max(state.active-max(state.requestBodyLoad.PendingActive, 0), 0)
+	classifiedActive := max(
+		max(state.requestBodyLoad.PendingActive, 0),
+		max(state.requestBodyLoad.HeavyActive, 0)+max(state.requestBodyLoad.HeavyWaiting, 0)+
+			max(state.requestBodyLoad.RecoveryActive, 0)+max(state.requestBodyLoad.RecoveryWaiting, 0),
+	)
+	normalActive := max(state.active-classifiedActive, 0)
 	normalWaiting := max(state.waiting-max(state.requestBodyLoad.PendingWaiting, 0), 0)
 	heavyActive := max(state.requestBodyLoad.HeavyActive, 0)
 	heavyWaiting := max(state.requestBodyLoad.HeavyWaiting, 0)
@@ -386,24 +391,135 @@ func (s *ConcurrencyService) observeRequestBodyLaneState(userID int64, load Requ
 	s.trendRecorder.observe(userConcurrencyStateEvent{userID: userID, requestBodyLoad: &load, at: at})
 }
 
-func (s *ConcurrencyService) GetUserConcurrencyTrend(ctx context.Context, now time.Time) (*UserConcurrencyTrend, error) {
-	if now.IsZero() {
-		now = time.Now().UTC()
+func (s *ConcurrencyService) GetUserConcurrencyTrend(ctx context.Context, start, end time.Time) (*UserConcurrencyTrend, error) {
+	now := time.Now().UTC()
+	if end.IsZero() || end.After(now) {
+		end = now
 	}
-	end := now.UTC().Truncate(time.Minute)
-	start := end.Add(-59 * time.Minute)
+	end = end.UTC().Truncate(time.Minute)
+	if start.IsZero() {
+		start = end.Add(-59 * time.Minute)
+	}
+	start = start.UTC().Truncate(time.Minute)
+	if end.Before(start) {
+		end = start
+	}
+	requestedStart := start
+	requestedEnd := end
+	bucket := time.Minute
+	if requestedEnd.Sub(requestedStart) > 6*time.Hour {
+		bucket = 5 * time.Minute
+	}
+	retentionStart := now.Add(-24 * time.Hour).UTC().Truncate(time.Minute)
+	if end.Before(retentionStart) {
+		return &UserConcurrencyTrend{
+			StartTime: requestedStart,
+			EndTime:   requestedEnd,
+			Bucket:    concurrencyTrendBucketName(bucket),
+			Points:    []UserConcurrencyTrendPoint{},
+		}, nil
+	}
+	coverageComplete := !start.Before(retentionStart)
+	if start.Before(retentionStart) {
+		start = retentionStart
+	}
+	coverageStart := start
+	coverageEnd := end
 	if s == nil || s.trendRecorder == nil || s.trendRecorder.cache == nil {
-		points := make([]UserConcurrencyTrendPoint, 0, 60)
-		for bucket := start; !bucket.After(end); bucket = bucket.Add(time.Minute) {
+		points := make([]UserConcurrencyTrendPoint, 0, int(end.Sub(start)/bucket)+1)
+		for pointAt := start.Truncate(bucket); !pointAt.After(end); pointAt = pointAt.Add(bucket) {
 			points = append(points, UserConcurrencyTrendPoint{
-				BucketStart: bucket,
+				BucketStart: pointAt,
 				Users:       map[int64]ConcurrencyPeak{},
 				UserLanes:   map[int64]ConcurrencyLanePeaks{},
 			})
 		}
-		return &UserConcurrencyTrend{StartTime: start, EndTime: end, Bucket: "minute", Points: points}, nil
+		return &UserConcurrencyTrend{
+			StartTime:        requestedStart,
+			EndTime:          requestedEnd,
+			CoverageStart:    &coverageStart,
+			CoverageEnd:      &coverageEnd,
+			CoverageComplete: coverageComplete,
+			Bucket:           concurrencyTrendBucketName(bucket),
+			Points:           points,
+		}, nil
 	}
-	return s.trendRecorder.cache.GetUserConcurrencyTrend(ctx, start, end)
+	trend, err := s.trendRecorder.cache.GetUserConcurrencyTrend(ctx, start, end)
+	if err != nil {
+		return trend, err
+	}
+	trend.StartTime = requestedStart
+	trend.EndTime = requestedEnd
+	trend.CoverageStart = &coverageStart
+	trend.CoverageEnd = &coverageEnd
+	trend.CoverageComplete = coverageComplete
+	if bucket == time.Minute {
+		return trend, nil
+	}
+	return aggregateUserConcurrencyTrend(trend, bucket), nil
+}
+
+func concurrencyTrendBucketName(bucket time.Duration) string {
+	if bucket == 5*time.Minute {
+		return "5m"
+	}
+	return "minute"
+}
+
+func aggregateUserConcurrencyTrend(trend *UserConcurrencyTrend, bucket time.Duration) *UserConcurrencyTrend {
+	if trend == nil || bucket <= time.Minute {
+		return trend
+	}
+	byBucket := make(map[time.Time]*UserConcurrencyTrendPoint)
+	order := make([]time.Time, 0, len(trend.Points))
+	for _, source := range trend.Points {
+		bucketStart := source.BucketStart.UTC().Truncate(bucket)
+		target := byBucket[bucketStart]
+		if target == nil {
+			target = &UserConcurrencyTrendPoint{
+				BucketStart: bucketStart,
+				Users:       make(map[int64]ConcurrencyPeak),
+				UserLanes:   make(map[int64]ConcurrencyLanePeaks),
+			}
+			byBucket[bucketStart] = target
+			order = append(order, bucketStart)
+		}
+		target.System = mergeConcurrencyPeak(target.System, source.System)
+		target.SystemLanes = mergeConcurrencyLanePeakValues(target.SystemLanes, source.SystemLanes)
+		for userID, peak := range source.Users {
+			target.Users[userID] = mergeConcurrencyPeak(target.Users[userID], peak)
+		}
+		for userID, lanes := range source.UserLanes {
+			target.UserLanes[userID] = mergeConcurrencyLanePeakValues(target.UserLanes[userID], lanes)
+		}
+	}
+	points := make([]UserConcurrencyTrendPoint, 0, len(order))
+	for _, bucketStart := range order {
+		points = append(points, *byBucket[bucketStart])
+	}
+	return &UserConcurrencyTrend{
+		StartTime:        trend.StartTime,
+		EndTime:          trend.EndTime,
+		CoverageStart:    trend.CoverageStart,
+		CoverageEnd:      trend.CoverageEnd,
+		CoverageComplete: trend.CoverageComplete,
+		Bucket:           concurrencyTrendBucketName(bucket),
+		Points:           points,
+	}
+}
+
+func mergeConcurrencyPeak(current, sample ConcurrencyPeak) ConcurrencyPeak {
+	current.PeakInUse = max(current.PeakInUse, sample.PeakInUse)
+	current.PeakWaiting = max(current.PeakWaiting, sample.PeakWaiting)
+	current.PeakDemand = max(current.PeakDemand, sample.PeakDemand)
+	return current
+}
+
+func mergeConcurrencyLanePeakValues(current, sample ConcurrencyLanePeaks) ConcurrencyLanePeaks {
+	current.Normal = mergeConcurrencyPeak(current.Normal, sample.Normal)
+	current.Heavy = mergeConcurrencyPeak(current.Heavy, sample.Heavy)
+	current.Recovery = mergeConcurrencyPeak(current.Recovery, sample.Recovery)
+	return current
 }
 
 func (s *ConcurrencyService) GetCurrentUserConcurrencyLoads(ctx context.Context) (map[int64]*UserLoadInfo, error) {

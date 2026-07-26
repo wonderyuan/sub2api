@@ -7,7 +7,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	pkghttputil "github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
@@ -118,6 +120,35 @@ func TestRequestBodyAdmissionPolicyClassifiesConfiguredLanes(t *testing.T) {
 	require.Equal(t, service.RequestBodyLaneRejected, policy.Classify(31, true))
 }
 
+func TestEnsureRecoveryExecutionDeadlineOnlyAppliesOnceToRecovery(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var deadline responsesRecoveryDeadline
+	for _, lane := range []service.RequestBodyLane{service.RequestBodyLaneNormal, service.RequestBodyLaneHeavy} {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", http.NoBody)
+		cancel := deadline.apply(c, lane)
+		_, hasDeadline := c.Request.Context().Deadline()
+		require.False(t, hasDeadline)
+		require.Nil(t, cancel)
+	}
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses/compact", http.NoBody)
+	cancel := deadline.apply(c, service.RequestBodyLaneRecovery)
+	require.NotNil(t, cancel)
+	firstDeadline, hasDeadline := c.Request.Context().Deadline()
+	require.True(t, hasDeadline)
+	require.WithinDuration(t, time.Now().Add(requestBodyRecoveryExecutionLimit), firstDeadline, time.Second)
+	cancel()
+
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses/compact", http.NoBody)
+	cancel = deadline.apply(c, service.RequestBodyLaneRecovery)
+	t.Cleanup(cancel)
+	secondDeadline, hasDeadline := c.Request.Context().Deadline()
+	require.True(t, hasDeadline)
+	require.Equal(t, firstDeadline, secondDeadline, "failover must reuse the original recovery deadline")
+}
+
 func TestReleaseSelectionForRequestBodyLaneWait(t *testing.T) {
 	released := 0
 	selection := &service.AccountSelectionResult{
@@ -134,6 +165,58 @@ func TestReleaseSelectionForRequestBodyLaneWait(t *testing.T) {
 	require.Nil(t, selection.ReleaseFunc)
 	require.NotNil(t, selection.WaitPlan)
 	require.Equal(t, 10, selection.WaitPlan.MaxConcurrency)
+}
+
+func TestLargeResponsesAccountSlotFollowsDetachedUpstreamLifecycle(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, lane := range []service.RequestBodyLane{service.RequestBodyLaneHeavy, service.RequestBodyLaneRecovery} {
+		t.Run(string(lane), func(t *testing.T) {
+			cache := &concurrencyCacheMock{
+				acquireAccountSlotFn: func(context.Context, int64, int, string) (bool, error) {
+					return true, nil
+				},
+			}
+			h := &OpenAIGatewayHandler{
+				gatewayService:    &service.OpenAIGatewayService{},
+				concurrencyHelper: NewConcurrencyHelper(service.NewConcurrencyService(cache), SSEPingFormatNone, 0),
+			}
+			clientCtx, cancelClient := context.WithCancel(context.Background())
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", http.NoBody).WithContext(clientCtx)
+			_, cancelAdmission := installRequestBodyAdmissionContexts(c)
+			selection := &service.AccountSelectionResult{
+				Account: &service.Account{ID: 9, Concurrency: 4},
+				WaitPlan: &service.AccountWaitPlan{
+					MaxConcurrency: 4,
+					MaxWaiting:     1,
+					Timeout:        time.Second,
+				},
+			}
+			streamStarted := false
+
+			release, acquired := h.acquireResponsesAccountSlotForLane(
+				c, nil, "", selection, lane, false, &streamStarted, nil,
+			)
+			require.True(t, acquired)
+			require.NotNil(t, release)
+
+			cancelClient()
+			select {
+			case <-c.Request.Context().Done():
+			case <-time.After(time.Second):
+				t.Fatal("handler context did not observe client cancellation")
+			}
+			time.Sleep(25 * time.Millisecond)
+			require.Zero(t, atomic.LoadInt32(&cache.releaseAccountCalled), "client disconnect must not release a slot while upstream draining continues")
+
+			cancelAdmission()
+			require.Eventually(t, func() bool {
+				return atomic.LoadInt32(&cache.releaseAccountCalled) == 1
+			}, time.Second, 10*time.Millisecond)
+			release()
+			require.Equal(t, int32(1), atomic.LoadInt32(&cache.releaseAccountCalled))
+		})
+	}
 }
 
 func TestOrdinaryRequestAboveHeavyLimitUsesStableCode(t *testing.T) {
@@ -153,8 +236,8 @@ func TestOrdinaryRequestAboveHeavyLimitUsesStableCode(t *testing.T) {
 	}}
 	streamStarted := false
 
-	_, _, admitted := (&OpenAIGatewayHandler{}).acquireResponsesRequestBodyLane(
-		c, nil, selection, 1, 31, false, false, &streamStarted, nil, nil,
+	_, _, admitted, _ := (&OpenAIGatewayHandler{}).acquireResponsesRequestBodyLane(
+		c, nil, selection, 1, 31, false, false, &streamStarted, nil, nil, false,
 	)
 
 	require.False(t, admitted)
@@ -181,13 +264,27 @@ func TestCompactRequestAboveRecoveryLimitUsesStableCode(t *testing.T) {
 	}}
 	streamStarted := false
 
-	_, _, admitted := (&OpenAIGatewayHandler{}).acquireResponsesRequestBodyLane(
-		c, nil, selection, 1, 31, true, false, &streamStarted, nil, nil,
+	_, _, admitted, _ := (&OpenAIGatewayHandler{}).acquireResponsesRequestBodyLane(
+		c, nil, selection, 1, 31, true, false, &streamStarted, nil, nil, false,
 	)
 
 	require.False(t, admitted)
 	require.Equal(t, http.StatusRequestEntityTooLarge, recorder.Code)
 	require.Equal(t, requestBodyRecoveryLimitExceededCode, gjson.GetBytes(recorder.Body.Bytes(), "error.code").String())
+}
+
+func TestRequestBodyRejectedAcrossAccountsUsesLargestEligibleLimit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", http.NoBody)
+
+	(&OpenAIGatewayHandler{}).rejectResponsesRequestBodyAcrossAccounts(c, 31, false, 30, false)
+
+	require.Equal(t, http.StatusRequestEntityTooLarge, recorder.Code)
+	require.Equal(t, requestBodyHeavyLimitExceededCode, gjson.GetBytes(recorder.Body.Bytes(), "error.code").String())
+	require.Contains(t, gjson.GetBytes(recorder.Body.Bytes(), "error.message").String(), "largest configured limit is 30 bytes")
+	require.Equal(t, string(service.RequestBodyLaneRejected), recorder.Header().Get("X-Sub2API-Request-Body-Lane"))
 }
 
 func TestRequestBodyAdmissionQueueFullUsesRateLimitTypeAndStableCode(t *testing.T) {
@@ -212,11 +309,12 @@ func TestRequestBodyAdmissionQueueFullUsesRateLimitTypeAndStableCode(t *testing.
 	}}
 	streamStarted := false
 
-	_, lane, admitted := h.acquireResponsesRequestBodyLane(
-		c, nil, selection, 1, 11, false, false, &streamStarted, nil, nil,
+	_, lane, admitted, retryOtherAccount := h.acquireResponsesRequestBodyLane(
+		c, nil, selection, 1, 11, false, false, &streamStarted, nil, nil, true,
 	)
 
 	require.False(t, admitted)
+	require.False(t, retryOtherAccount)
 	require.Equal(t, service.RequestBodyLaneHeavy, lane)
 	require.Equal(t, http.StatusTooManyRequests, recorder.Code)
 	require.Equal(t, "rate_limit_error", gjson.GetBytes(recorder.Body.Bytes(), "error.type").String())
@@ -248,8 +346,8 @@ func TestRequestBodyAdmissionUnavailableUsesAPIErrorTypeAndStableCode(t *testing
 	}}
 	streamStarted := false
 
-	_, lane, admitted := h.acquireResponsesRequestBodyLane(
-		c, nil, selection, 1, 11, false, false, &streamStarted, nil, nil,
+	_, lane, admitted, _ := h.acquireResponsesRequestBodyLane(
+		c, nil, selection, 1, 11, false, false, &streamStarted, nil, nil, false,
 	)
 
 	require.False(t, admitted)

@@ -94,6 +94,73 @@ type RequestBodyAdmissionStateCache interface {
 	SetRequestBodyClassificationStateWithState(ctx context.Context, userID int64, requestID string, active, waiting bool) (RequestBodyLaneUserLoad, time.Time, error)
 }
 
+// RequestBodyAdmissionLeaseCache refreshes short-lived admission leases while
+// the owning request is still running. Implementations must only refresh an
+// existing lease and must never recreate a lease that has already been lost.
+type RequestBodyAdmissionLeaseCache interface {
+	RefreshRequestBodyLane(ctx context.Context, lane RequestBodyLane, scopeID, userID int64, weight int, requestID string) (bool, error)
+}
+
+type requestBodyAdmissionLeaseLossCancelKey struct{}
+type requestBodyAdmissionUpstreamContextKey struct{}
+
+// WithRequestBodyAdmissionLeaseLossCancel lets the admission owner stop the
+// upstream request if Redis confirms that its distributed lease disappeared.
+func WithRequestBodyAdmissionLeaseLossCancel(ctx context.Context, cancel context.CancelFunc) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if cancel == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, requestBodyAdmissionLeaseLossCancelKey{}, cancel)
+}
+
+// WithRequestBodyAdmissionUpstreamContext carries an upstream lifecycle that is
+// detached from the client connection but still observes admission lease loss
+// and recovery execution deadlines.
+func WithRequestBodyAdmissionUpstreamContext(ctx, upstream context.Context) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if upstream == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, requestBodyAdmissionUpstreamContextKey{}, upstream)
+}
+
+func RequestBodyAdmissionUpstreamContext(ctx context.Context) (context.Context, bool) {
+	if ctx == nil {
+		return nil, false
+	}
+	upstream, ok := ctx.Value(requestBodyAdmissionUpstreamContextKey{}).(context.Context)
+	return upstream, ok && upstream != nil
+}
+
+func cancelRequestBodyAdmissionLeaseOwner(ctx context.Context) {
+	if ctx == nil {
+		return
+	}
+	if cancel, ok := ctx.Value(requestBodyAdmissionLeaseLossCancelKey{}).(context.CancelFunc); ok && cancel != nil {
+		cancel()
+	}
+}
+
+func refreshRequestBodyAdmissionLease(
+	ctx context.Context,
+	cache RequestBodyAdmissionLeaseCache,
+	lane RequestBodyLane,
+	scopeID, userID int64,
+	weight int,
+	requestID string,
+) (bool, error) {
+	refreshed, err := cache.RefreshRequestBodyLane(ctx, lane, scopeID, userID, weight, requestID)
+	if err == nil && !refreshed {
+		cancelRequestBodyAdmissionLeaseOwner(ctx)
+	}
+	return refreshed, err
+}
+
 // RequestBodyAdmissionScopedWaitStateCache additionally bounds queued bodies by
 // lane scope: account for heavy requests and global for recovery requests.
 type RequestBodyAdmissionScopedWaitStateCache interface {
@@ -115,6 +182,8 @@ const (
 	openAIWSIngressLeaseRefreshInterval = 20 * time.Second
 	openAIWSIngressLeaseOperationTO     = 2 * time.Second
 )
+
+const requestBodyAdmissionLeaseRefreshInterval = 15 * time.Second
 
 var ErrOpenAIWSIngressLeaseLost = errors.New("openai websocket ingress lease lost")
 
@@ -494,23 +563,61 @@ func (s *ConcurrencyService) acquireRequestBodyLane(
 	if !acquired {
 		return &AcquireResult{Acquired: false}, nil
 	}
+	leaseOwnerCtx := ctx
+	if upstreamCtx, ok := RequestBodyAdmissionUpstreamContext(ctx); ok {
+		leaseOwnerCtx = upstreamCtx
+	}
+	leaseDone := make(chan struct{})
+	var releaseOnce sync.Once
+	if leaseCache, supportsRefresh := cache.(RequestBodyAdmissionLeaseCache); supportsRefresh {
+		go func() {
+			ticker := time.NewTicker(requestBodyAdmissionLeaseRefreshInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					refreshCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+					refreshOwnerCtx := WithRequestBodyAdmissionLeaseLossCancel(refreshCtx, func() {
+						cancelRequestBodyAdmissionLeaseOwner(leaseOwnerCtx)
+					})
+					refreshed, refreshErr := refreshRequestBodyAdmissionLease(refreshOwnerCtx, leaseCache, lane, scopeID, userID, weight, requestID)
+					cancel()
+					if refreshErr != nil {
+						logger.LegacyPrintf("service.concurrency", "Warning: refresh request body %s lane failed: %v", lane, refreshErr)
+						continue
+					}
+					if !refreshed {
+						logger.LegacyPrintf("service.concurrency", "Warning: request body %s lane lease was lost (req=%s)", lane, requestID)
+						return
+					}
+				case <-leaseDone:
+					return
+				case <-leaseOwnerCtx.Done():
+					return
+				}
+			}
+		}()
+	}
 	return &AcquireResult{
 		Acquired: true,
 		ReleaseFunc: func() {
-			bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			if stateCache, supportsState := cache.(RequestBodyAdmissionStateCache); supportsState {
-				state, observedAt, releaseErr := stateCache.ReleaseRequestBodyLaneWithState(bgCtx, lane, scopeID, userID, weight, requestID)
-				if releaseErr == nil {
-					s.observeRequestBodyLaneState(userID, state, observedAt)
+			releaseOnce.Do(func() {
+				close(leaseDone)
+				bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				if stateCache, supportsState := cache.(RequestBodyAdmissionStateCache); supportsState {
+					state, observedAt, releaseErr := stateCache.ReleaseRequestBodyLaneWithState(bgCtx, lane, scopeID, userID, weight, requestID)
+					if releaseErr == nil {
+						s.observeRequestBodyLaneState(userID, state, observedAt)
+						return
+					}
+					logger.LegacyPrintf("service.concurrency", "Warning: release request body %s lane failed: %v", lane, releaseErr)
 					return
 				}
-				logger.LegacyPrintf("service.concurrency", "Warning: release request body %s lane failed: %v", lane, releaseErr)
-				return
-			}
-			if releaseErr := cache.ReleaseRequestBodyLane(bgCtx, lane, scopeID, userID, weight, requestID); releaseErr != nil {
-				logger.LegacyPrintf("service.concurrency", "Warning: release request body %s lane failed: %v", lane, releaseErr)
-			}
+				if releaseErr := cache.ReleaseRequestBodyLane(bgCtx, lane, scopeID, userID, weight, requestID); releaseErr != nil {
+					logger.LegacyPrintf("service.concurrency", "Warning: release request body %s lane failed: %v", lane, releaseErr)
+				}
+			})
 		},
 	}, nil
 }

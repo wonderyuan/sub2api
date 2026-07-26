@@ -283,6 +283,7 @@ func (h *ConcurrencyHelper) AcquireRequestBodyLaneWithWait(
 	streamStarted *bool,
 ) (func(), error) {
 	ctx := c.Request.Context()
+	ownerCtx := ctx
 	requestID := h.concurrencyService.NewRequestBodyLaneRequestID()
 	releaseFunc, acquired, err := h.tryAcquireRequestBodyLaneWithRequestID(
 		ctx, lane, scopeID, userID, maxPermits, weight, requestID,
@@ -299,9 +300,9 @@ func (h *ConcurrencyHelper) AcquireRequestBodyLaneWithWait(
 	}
 	defer h.concurrencyService.DecrementRequestBodyLaneWaitCount(ctx, lane, scopeID, userID, requestID)
 
-	acquire := func(acquireCtx context.Context) (*service.AcquireResult, error) {
+	acquire := func(context.Context) (*service.AcquireResult, error) {
 		return h.concurrencyService.AcquireRequestBodyLaneWithRequestID(
-			acquireCtx, lane, scopeID, userID, maxPermits, weight, requestID,
+			ownerCtx, lane, scopeID, userID, maxPermits, weight, requestID,
 		)
 	}
 	return h.waitForAcquireWithPingTimeout(

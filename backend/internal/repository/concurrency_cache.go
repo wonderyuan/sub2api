@@ -48,6 +48,9 @@ const (
 
 	// 默认槽位过期时间（分钟），可通过配置覆盖
 	defaultSlotTTLMinutes = 15
+	// Admission leases are refreshed while a request is alive. Keeping this
+	// independent from the general concurrency TTL makes crash recovery fast.
+	requestBodyAdmissionLeaseTTLSeconds = 60
 
 	// 活跃索引用来替代后台任务全量 SCAN 槽位键。
 	// member 是账号/用户 ID，score 是“预计仍需关注到”的 Redis Unix 秒时间戳。
@@ -343,18 +346,27 @@ var (
 		local userKey = KEYS[2]
 		local waitKey = KEYS[3]
 		local scopeWaitKey = KEYS[4]
+		local accountScopeKey = KEYS[5]
 		local maxPermits = tonumber(ARGV[1])
 		local weight = tonumber(ARGV[2])
 		local ttl = tonumber(ARGV[3])
 		local requestID = ARGV[4]
 		local lane = ARGV[5]
 		local scopeWaitMember = ARGV[6]
+		local accountMaxPermits = tonumber(ARGV[7])
 		local activeMember = lane .. ':' .. requestID
+		local pendingActiveMember = 'pending_active:' .. requestID
 		local now = tonumber(redis.call('TIME')[1])
 		local expireBefore = now - ttl
 
 		redis.call('ZREMRANGEBYSCORE', scopeKey, '-inf', expireBefore)
 		redis.call('ZREMRANGEBYSCORE', userKey, '-inf', expireBefore)
+		if accountMaxPermits > 0 then
+			redis.call('ZREMRANGEBYSCORE', accountScopeKey, '-inf', expireBefore)
+		end
+		if redis.call('ZSCORE', userKey, pendingActiveMember) ~= false then
+			redis.call('ZADD', userKey, now, pendingActiveMember)
+		end
 
 		local function state(result)
 			local heavyActive = 0
@@ -388,6 +400,9 @@ var (
 			redis.call('ZADD', userKey, now, activeMember)
 			for i = 1, weight do
 				redis.call('ZADD', scopeKey, now, requestID .. ':' .. i)
+				if accountMaxPermits > 0 then
+					redis.call('ZADD', accountScopeKey, now, requestID .. ':' .. i)
+				end
 			end
 			if redis.call('GET', waitKey) == activeMember then
 				redis.call('DEL', waitKey)
@@ -395,6 +410,7 @@ var (
 			end
 			redis.call('EXPIRE', userKey, ttl)
 			redis.call('EXPIRE', scopeKey, ttl)
+			if accountMaxPermits > 0 then redis.call('EXPIRE', accountScopeKey, ttl) end
 			return state(1)
 		end
 
@@ -411,10 +427,16 @@ var (
 		if redis.call('ZCARD', scopeKey) + weight > maxPermits then
 			return state(0)
 		end
+		if accountMaxPermits > 0 and redis.call('ZCARD', accountScopeKey) + weight > accountMaxPermits then
+			return state(0)
+		end
 
 		redis.call('ZADD', userKey, now, activeMember)
 		for i = 1, weight do
 			redis.call('ZADD', scopeKey, now, requestID .. ':' .. i)
+			if accountMaxPermits > 0 then
+				redis.call('ZADD', accountScopeKey, now, requestID .. ':' .. i)
+			end
 		end
 		if redis.call('GET', waitKey) == activeMember then
 			redis.call('DEL', waitKey)
@@ -422,6 +444,7 @@ var (
 		end
 		redis.call('EXPIRE', userKey, ttl)
 		redis.call('EXPIRE', scopeKey, ttl)
+		if accountMaxPermits > 0 then redis.call('EXPIRE', accountScopeKey, ttl) end
 		return state(1)
 	`)
 
@@ -437,6 +460,7 @@ var (
 		redis.call('ZREM', KEYS[2], requestID)
 		for i = 1, weight do
 			redis.call('ZREM', KEYS[1], requestID .. ':' .. i)
+			redis.call('ZREM', KEYS[4], requestID .. ':' .. i)
 		end
 		local heavyActive = 0
 		local recoveryActive = 0
@@ -463,6 +487,39 @@ var (
 			recoveryWaiting = 1
 		end
 		return {now, heavyActive, heavyWaiting, recoveryActive, recoveryWaiting, pendingActive, pendingWaiting}
+	`)
+
+	requestBodyLaneRefreshScript = redis.NewScript(`
+		redis.replicate_commands()
+		local lane = ARGV[1]
+		local requestID = ARGV[2]
+		local weight = tonumber(ARGV[3])
+		local ttl = tonumber(ARGV[4])
+		local hasAccountScope = tonumber(ARGV[5])
+		local activeMember = lane .. ':' .. requestID
+		local pendingActiveMember = 'pending_active:' .. requestID
+		local now = tonumber(redis.call('TIME')[1])
+		local expireBefore = now - ttl
+		redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', expireBefore)
+		redis.call('ZREMRANGEBYSCORE', KEYS[2], '-inf', expireBefore)
+		if hasAccountScope > 0 then redis.call('ZREMRANGEBYSCORE', KEYS[3], '-inf', expireBefore) end
+		if redis.call('ZSCORE', KEYS[2], activeMember) == false then return 0 end
+		for i = 1, weight do
+			if redis.call('ZSCORE', KEYS[1], requestID .. ':' .. i) == false then return 0 end
+			if hasAccountScope > 0 and redis.call('ZSCORE', KEYS[3], requestID .. ':' .. i) == false then return 0 end
+		end
+		redis.call('ZADD', KEYS[2], now, activeMember)
+		if redis.call('ZSCORE', KEYS[2], pendingActiveMember) ~= false then
+			redis.call('ZADD', KEYS[2], now, pendingActiveMember)
+		end
+		for i = 1, weight do
+			redis.call('ZADD', KEYS[1], now, requestID .. ':' .. i)
+			if hasAccountScope > 0 then redis.call('ZADD', KEYS[3], now, requestID .. ':' .. i) end
+		end
+		redis.call('EXPIRE', KEYS[1], ttl)
+		redis.call('EXPIRE', KEYS[2], ttl)
+		if hasAccountScope > 0 then redis.call('EXPIRE', KEYS[3], ttl) end
+		return 1
 	`)
 
 	requestBodyLaneIncrementWaitScript = redis.NewScript(`
@@ -626,6 +683,7 @@ type concurrencyCache struct {
 var _ service.RequestBodyAdmissionCache = (*concurrencyCache)(nil)
 var _ service.RequestBodyAdmissionStateCache = (*concurrencyCache)(nil)
 var _ service.RequestBodyAdmissionScopedWaitStateCache = (*concurrencyCache)(nil)
+var _ service.RequestBodyAdmissionLeaseCache = (*concurrencyCache)(nil)
 
 // NewConcurrencyCache 创建并发控制缓存
 // slotTTLMinutes: 槽位过期时间（分钟），0 或负数使用默认值 15 分钟
@@ -671,6 +729,26 @@ func accountWaitKey(accountID int64) string {
 
 func requestBodyLaneScopeKey(lane service.RequestBodyLane, scopeID int64) string {
 	return fmt.Sprintf("%s{admission}:%s:scope:%d", requestBodyLaneKeyPrefix, lane, scopeID)
+}
+
+func requestBodyLaneScopeKeys(lane service.RequestBodyLane, accountID int64) (primary, account string, accountLimit int) {
+	if lane == service.RequestBodyLaneRecovery {
+		primary = requestBodyLaneScopeKey(lane, 0)
+		if accountID > 0 {
+			account = requestBodyLaneScopeKey(lane, accountID)
+			accountLimit = service.RequestBodyRecoveryAccountConcurrency
+		}
+		return primary, account, accountLimit
+	}
+	primary = requestBodyLaneScopeKey(lane, accountID)
+	return primary, primary, 0
+}
+
+func requestBodyLaneWaitScopeID(lane service.RequestBodyLane, scopeID int64) int64 {
+	if lane == service.RequestBodyLaneRecovery {
+		return 0
+	}
+	return scopeID
 }
 
 func requestBodyLaneUserKey(userID int64) string {
@@ -948,21 +1026,27 @@ func (c *concurrencyCache) AcquireRequestBodyLaneWithState(
 	if maxPermits <= 0 || weight <= 0 || requestID == "" {
 		return false, service.RequestBodyLaneUserLoad{}, time.Time{}, nil
 	}
+	primaryScopeKey, accountScopeKey, accountLimit := requestBodyLaneScopeKeys(lane, scopeID)
+	if accountScopeKey == "" {
+		accountScopeKey = primaryScopeKey
+	}
 	raw, err := requestBodyLaneAcquireScript.Run(
 		ctx,
 		c.rdb,
 		[]string{
-			requestBodyLaneScopeKey(lane, scopeID),
+			primaryScopeKey,
 			requestBodyLaneUserKey(userID),
 			requestBodyLaneWaitKey(userID),
-			requestBodyLaneScopeWaitKey(lane, scopeID),
+			requestBodyLaneScopeWaitKey(lane, requestBodyLaneWaitScopeID(lane, scopeID)),
+			accountScopeKey,
 		},
 		maxPermits,
 		weight,
-		c.slotTTLSeconds,
+		requestBodyAdmissionLeaseTTLSeconds,
 		requestID,
 		string(lane),
 		requestBodyLaneScopeWaitMember(userID, requestID),
+		accountLimit,
 	).Result()
 	if err != nil {
 		return false, service.RequestBodyLaneUserLoad{}, time.Time{}, err
@@ -1004,14 +1088,18 @@ func (c *concurrencyCache) ReleaseRequestBodyLaneWithState(
 	if weight <= 0 {
 		weight = 1
 	}
+	primaryScopeKey, accountScopeKey, _ := requestBodyLaneScopeKeys(lane, scopeID)
+	if accountScopeKey == "" {
+		accountScopeKey = primaryScopeKey
+	}
 	raw, err := requestBodyLaneReleaseScript.Run(
 		ctx,
 		c.rdb,
-		[]string{requestBodyLaneScopeKey(lane, scopeID), requestBodyLaneUserKey(userID), requestBodyLaneWaitKey(userID)},
+		[]string{primaryScopeKey, requestBodyLaneUserKey(userID), requestBodyLaneWaitKey(userID), accountScopeKey},
 		requestID,
 		weight,
 		string(lane),
-		c.slotTTLSeconds,
+		requestBodyAdmissionLeaseTTLSeconds,
 	).Result()
 	if err != nil {
 		return service.RequestBodyLaneUserLoad{}, time.Time{}, err
@@ -1026,6 +1114,35 @@ func (c *concurrencyCache) ReleaseRequestBodyLaneWithState(
 	}
 	c.refreshRequestBodyActiveIndexAt(ctx, userID, state, now)
 	return state, time.Unix(now, 0).UTC(), nil
+}
+
+func (c *concurrencyCache) RefreshRequestBodyLane(
+	ctx context.Context,
+	lane service.RequestBodyLane,
+	scopeID, userID int64,
+	weight int,
+	requestID string,
+) (bool, error) {
+	if c == nil || c.rdb == nil || requestID == "" {
+		return false, nil
+	}
+	if weight <= 0 {
+		weight = 1
+	}
+	primaryScopeKey, accountScopeKey, accountLimit := requestBodyLaneScopeKeys(lane, scopeID)
+	if accountScopeKey == "" {
+		accountScopeKey = primaryScopeKey
+	}
+	result, err := requestBodyLaneRefreshScript.Run(
+		ctx,
+		c.rdb,
+		[]string{primaryScopeKey, requestBodyLaneUserKey(userID), accountScopeKey},
+		string(lane), requestID, weight, requestBodyAdmissionLeaseTTLSeconds, accountLimit,
+	).Int()
+	if err != nil {
+		return false, err
+	}
+	return result == 1, nil
 }
 
 func (c *concurrencyCache) IncrementRequestBodyLaneWaitCount(ctx context.Context, userID int64, maxWait int, waiterID string) (bool, error) {
@@ -1053,17 +1170,18 @@ func (c *concurrencyCache) IncrementRequestBodyLaneScopedWaitCountWithState(
 	if maxScopeWait <= 0 || waiterID == "" {
 		return false, service.RequestBodyLaneUserLoad{}, time.Time{}, nil
 	}
+	waitScopeID := requestBodyLaneWaitScopeID(lane, scopeID)
 	raw, err := requestBodyLaneIncrementWaitScript.Run(
 		ctx,
 		c.rdb,
 		[]string{
 			requestBodyLaneUserKey(userID),
 			requestBodyLaneWaitKey(userID),
-			requestBodyLaneScopeWaitKey(lane, scopeID),
+			requestBodyLaneScopeWaitKey(lane, waitScopeID),
 		},
 		string(lane),
 		c.waitQueueTTLSeconds,
-		c.slotTTLSeconds,
+		requestBodyAdmissionLeaseTTLSeconds,
 		waiterID,
 		maxScopeWait,
 		requestBodyLaneScopeWaitMember(userID, waiterID),
@@ -1107,16 +1225,17 @@ func (c *concurrencyCache) DecrementRequestBodyLaneScopedWaitCountWithState(
 	scopeID, userID int64,
 	waiterID string,
 ) (service.RequestBodyLaneUserLoad, time.Time, error) {
+	waitScopeID := requestBodyLaneWaitScopeID(lane, scopeID)
 	raw, err := requestBodyLaneDecrementWaitScript.Run(
 		ctx,
 		c.rdb,
 		[]string{
 			requestBodyLaneUserKey(userID),
 			requestBodyLaneWaitKey(userID),
-			requestBodyLaneScopeWaitKey(lane, scopeID),
+			requestBodyLaneScopeWaitKey(lane, waitScopeID),
 		},
 		string(lane),
-		c.slotTTLSeconds,
+		requestBodyAdmissionLeaseTTLSeconds,
 		waiterID,
 		requestBodyLaneScopeWaitMember(userID, waiterID),
 	).Result()
@@ -1205,7 +1324,7 @@ func (c *concurrencyCache) refreshRequestBodyActiveIndexAt(ctx context.Context, 
 		c.removeActiveIndexMembers(ctx, requestBodyActiveIndexKey, []string{member})
 		return
 	}
-	ttl := c.slotTTLSeconds
+	ttl := requestBodyAdmissionLeaseTTLSeconds
 	if (state.HeavyWaiting > 0 || state.RecoveryWaiting > 0) && c.waitQueueTTLSeconds > ttl {
 		ttl = c.waitQueueTTLSeconds
 	}

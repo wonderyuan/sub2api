@@ -27,8 +27,15 @@ func TestRequestBodyAdmissionPolicyDefaultsAndClassification(t *testing.T) {
 func TestRequestBodyHeavyConcurrencyLimit(t *testing.T) {
 	require.Equal(t, 1, RequestBodyHeavyConcurrencyLimit(1))
 	require.Equal(t, 1, RequestBodyHeavyConcurrencyLimit(5))
-	require.Equal(t, 2, RequestBodyHeavyConcurrencyLimit(10))
-	require.Equal(t, 4, RequestBodyHeavyConcurrencyLimit(20))
+	require.Equal(t, 1, RequestBodyHeavyConcurrencyLimit(10))
+	require.Equal(t, 1, RequestBodyHeavyConcurrencyLimit(20))
+}
+
+func TestRequestBodyLargeAccountConcurrencyLimitReservesOrdinarySlot(t *testing.T) {
+	require.Equal(t, 0, RequestBodyLargeAccountConcurrencyLimit(0))
+	require.Equal(t, 1, RequestBodyLargeAccountConcurrencyLimit(1))
+	require.Equal(t, 1, RequestBodyLargeAccountConcurrencyLimit(2))
+	require.Equal(t, 4, RequestBodyLargeAccountConcurrencyLimit(5))
 }
 
 func TestRequestBodyLaneWaitLimit(t *testing.T) {

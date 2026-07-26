@@ -239,6 +239,61 @@ func TestRequestBodyLaneAcquireIsIdempotentForSameRequest(t *testing.T) {
 	require.EqualValues(t, 1, cache.rdb.ZCard(ctx, requestBodyLaneScopeKey(service.RequestBodyLaneHeavy, 46)).Val())
 }
 
+func TestRecoveryLaneEnforcesGlobalAccountAndUserLimits(t *testing.T) {
+	cache, _ := newConcurrencyTrendTestCache(t)
+	ctx := context.Background()
+
+	acquired, _, _, err := cache.AcquireRequestBodyLaneWithState(
+		ctx, service.RequestBodyLaneRecovery, 41, 1001, service.RequestBodyRecoveryGlobalConcurrency, 1, "recovery-1",
+	)
+	require.NoError(t, err)
+	require.True(t, acquired)
+
+	acquired, _, _, err = cache.AcquireRequestBodyLaneWithState(
+		ctx, service.RequestBodyLaneRecovery, 41, 1002, service.RequestBodyRecoveryGlobalConcurrency, 1, "recovery-same-account",
+	)
+	require.NoError(t, err)
+	require.False(t, acquired, "one account may only run one recovery request")
+
+	acquired, _, _, err = cache.AcquireRequestBodyLaneWithState(
+		ctx, service.RequestBodyLaneRecovery, 42, 1002, service.RequestBodyRecoveryGlobalConcurrency, 1, "recovery-2",
+	)
+	require.NoError(t, err)
+	require.True(t, acquired, "a second account may use the other global recovery slot")
+
+	acquired, _, _, err = cache.AcquireRequestBodyLaneWithState(
+		ctx, service.RequestBodyLaneRecovery, 43, 1003, service.RequestBodyRecoveryGlobalConcurrency, 1, "recovery-global-full",
+	)
+	require.NoError(t, err)
+	require.False(t, acquired, "the recovery lane has two global slots")
+
+	acquired, _, _, err = cache.AcquireRequestBodyLaneWithState(
+		ctx, service.RequestBodyLaneHeavy, 44, 1001, 1, 1, "heavy-same-user",
+	)
+	require.NoError(t, err)
+	require.False(t, acquired, "one user may only hold one large-request slot across lanes")
+}
+
+func TestRequestBodyLeaseRefreshDoesNotRecreateLostLease(t *testing.T) {
+	cache, _ := newConcurrencyTrendTestCache(t)
+	ctx := context.Background()
+
+	acquired, _, _, err := cache.AcquireRequestBodyLaneWithState(
+		ctx, service.RequestBodyLaneRecovery, 41, 1001, service.RequestBodyRecoveryGlobalConcurrency, 1, "recovery-refresh",
+	)
+	require.NoError(t, err)
+	require.True(t, acquired)
+
+	refreshed, err := cache.RefreshRequestBodyLane(ctx, service.RequestBodyLaneRecovery, 41, 1001, 1, "recovery-refresh")
+	require.NoError(t, err)
+	require.True(t, refreshed)
+
+	require.NoError(t, cache.rdb.Del(ctx, requestBodyLaneUserKey(1001)).Err())
+	refreshed, err = cache.RefreshRequestBodyLane(ctx, service.RequestBodyLaneRecovery, 41, 1001, 1, "recovery-refresh")
+	require.NoError(t, err)
+	require.False(t, refreshed, "refresh must not recreate a partially lost lease")
+}
+
 func TestRequestBodyClassificationReservationFollowsUserSlotLifecycle(t *testing.T) {
 	cache, _ := newConcurrencyTrendTestCache(t)
 	svc := service.NewConcurrencyService(cache)

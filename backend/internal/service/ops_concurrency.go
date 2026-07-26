@@ -415,26 +415,23 @@ func (s *OpsService) GetUserConcurrencyStats(ctx context.Context) (map[int64]*Us
 	return result, &collectedAt, nil
 }
 
-// GetUserConcurrencyTrend returns the last hour of per-minute user concurrency peaks.
-func (s *OpsService) GetUserConcurrencyTrend(ctx context.Context) (*UserConcurrencyTrendResponse, error) {
+// GetUserConcurrencyTrend returns selected-range user concurrency peaks from
+// the short-lived Redis trend store.
+func (s *OpsService) GetUserConcurrencyTrend(ctx context.Context, start, end time.Time) (*UserConcurrencyTrendResponse, error) {
 	if err := s.RequireMonitoringEnabled(ctx); err != nil {
 		return nil, err
 	}
 	now := time.Now().UTC()
-	if s == nil || s.concurrencyService == nil {
-		end := now.Truncate(time.Minute)
-		start := end.Add(-59 * time.Minute)
-		points := make([]UserConcurrencyTrendPoint, 0, 60)
-		for bucket := start; !bucket.After(end); bucket = bucket.Add(time.Minute) {
-			points = append(points, UserConcurrencyTrendPoint{
-				BucketStart: bucket,
-				Users:       map[int64]ConcurrencyPeak{},
-				UserLanes:   map[int64]ConcurrencyLanePeaks{},
-			})
-		}
-		return &UserConcurrencyTrendResponse{StartTime: start, EndTime: end, Bucket: "minute", Points: points, Users: map[int64]UserConcurrencyTrendUser{}}, nil
+	if end.IsZero() || end.After(now) {
+		end = now
 	}
-	trend, err := s.concurrencyService.GetUserConcurrencyTrend(ctx, now)
+	if start.IsZero() {
+		start = end.Add(-time.Hour)
+	}
+	if s == nil || s.concurrencyService == nil {
+		return &UserConcurrencyTrendResponse{StartTime: start, EndTime: end, Bucket: "minute", Points: []UserConcurrencyTrendPoint{}, Users: map[int64]UserConcurrencyTrendUser{}}, nil
+	}
+	trend, err := s.concurrencyService.GetUserConcurrencyTrend(ctx, start, end)
 	if err != nil {
 		return nil, err
 	}
@@ -511,20 +508,23 @@ func (s *OpsService) GetUserConcurrencyTrend(ctx context.Context) (*UserConcurre
 	}
 	latencyLanes := RequestBodyLaneLatencySummaries{}
 	if repo, ok := s.opsRepo.(opsRequestBodyLaneLatencyRepository); ok {
-		latencyLanes, err = repo.GetRequestBodyLaneLatencySummaries(ctx, trend.StartTime, now)
+		latencyLanes, err = repo.GetRequestBodyLaneLatencySummaries(ctx, trend.StartTime, trend.EndTime)
 		if err != nil {
 			return nil, err
 		}
 	}
 
 	return &UserConcurrencyTrendResponse{
-		StartTime:    trend.StartTime,
-		EndTime:      trend.EndTime,
-		Bucket:       trend.Bucket,
-		Current:      current,
-		CurrentLanes: currentLanes,
-		LatencyLanes: latencyLanes,
-		Points:       trend.Points,
-		Users:        metadata,
+		StartTime:        trend.StartTime,
+		EndTime:          trend.EndTime,
+		CoverageStart:    trend.CoverageStart,
+		CoverageEnd:      trend.CoverageEnd,
+		CoverageComplete: trend.CoverageComplete,
+		Bucket:           trend.Bucket,
+		Current:          current,
+		CurrentLanes:     currentLanes,
+		LatencyLanes:     latencyLanes,
+		Points:           trend.Points,
+		Users:            metadata,
 	}, nil
 }

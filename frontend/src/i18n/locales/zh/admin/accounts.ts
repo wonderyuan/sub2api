@@ -857,7 +857,7 @@ export default {
       requestBodyNormalLimit: '普通通道上限（MB）',
       requestBodyHeavyLimit: '重请求通道上限（MB）',
       requestBodyRecoveryLimit: '恢复通道上限（MB）',
-      requestBodyAdmissionCapacityHint: '重请求最多使用此账号 20% 的并发；超过重请求上限的普通请求会被拒绝。恢复通道仅供远程压缩使用，全局仅 1 个槽位和 1 个等待请求。',
+      requestBodyAdmissionCapacityHint: '重请求通道每个账号最多同时执行 1 个请求；超过重请求大小上限的普通请求会被拒绝。恢复通道仅供远程压缩使用，全局最多同时执行 2 个、等待 2 个，且每个账号最多执行 1 个。',
       requestBodyAdmissionInvalid: '请求体大小必须为正数，满足普通通道 < 重请求通道 < 恢复通道，且恢复通道不能超过 32 MB。',
       expiresAt: '过期时间',
       expiresAtHint: '留空表示不过期',

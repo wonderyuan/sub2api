@@ -14,7 +14,7 @@ import (
 
 const (
 	userConcurrencyTrendKeyPrefix = "ops:concurrency:trend:minute:"
-	userConcurrencyTrendTTL       = 70 * time.Minute
+	userConcurrencyTrendTTL       = 25 * time.Hour
 )
 
 var mergeUserConcurrencyTrendScript = redis.NewScript(`
@@ -101,7 +101,7 @@ func (c *concurrencyCache) GetActiveRequestBodyLaneLoads(ctx context.Context) (m
 
 	result := make(map[int64]service.RequestBodyLaneUserLoad, len(members))
 	staleMembers := make([]string, 0)
-	cutoff := strconv.FormatInt(now-int64(c.slotTTLSeconds), 10)
+	cutoff := strconv.FormatInt(now-requestBodyAdmissionLeaseTTLSeconds, 10)
 	for start := 0; start < len(members); start += activeIndexPipelineChunkSize {
 		end := min(start+activeIndexPipelineChunkSize, len(members))
 		type laneLoadCommand struct {
