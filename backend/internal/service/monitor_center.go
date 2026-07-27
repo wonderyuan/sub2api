@@ -37,7 +37,10 @@ type monitorCenterRepository interface {
 	UpsertMonitorCenterOpenAIHistory(ctx context.Context, point *MonitorCenterOpenAIHistoryPoint) error
 	InsertMonitorCenterOpenAIEvent(ctx context.Context, observedAt time.Time, contentHash string, status *MonitorCenterOpenAIStatus) error
 	UpsertMonitorCenterIncidentUpdates(ctx context.Context, incidents []MonitorCenterIncident) error
+	UpsertMonitorCenterIncidents(ctx context.Context, observedAt time.Time, incidents []MonitorCenterIncident) error
+	ResolveMissingMonitorCenterIncidents(ctx context.Context, observedAt time.Time, activeIncidentIDs []string) error
 	ListMonitorCenterOpenAIHistory(ctx context.Context, start, end time.Time) ([]MonitorCenterOpenAIHistoryPoint, error)
+	ListMonitorCenterIncidents(ctx context.Context, start, end time.Time) ([]MonitorCenterIncident, error)
 	DeleteMonitorCenterOpenAIBefore(ctx context.Context, before time.Time) error
 	LoadLatestMonitorCenterOpenAIEventHash(ctx context.Context) (string, error)
 }
@@ -102,11 +105,15 @@ type openAISummaryPayload struct {
 		Status string `json:"status"`
 	} `json:"components"`
 	Incidents []struct {
-		ID         string    `json:"id"`
-		Name       string    `json:"name"`
-		Status     string    `json:"status"`
-		Impact     string    `json:"impact"`
-		UpdatedAt  time.Time `json:"updated_at"`
+		ID         string     `json:"id"`
+		Name       string     `json:"name"`
+		Status     string     `json:"status"`
+		Impact     string     `json:"impact"`
+		Shortlink  string     `json:"shortlink"`
+		CreatedAt  *time.Time `json:"created_at"`
+		StartedAt  *time.Time `json:"started_at"`
+		UpdatedAt  time.Time  `json:"updated_at"`
+		ResolvedAt *time.Time `json:"resolved_at"`
 		Components []struct {
 			ID     string `json:"id"`
 			Name   string `json:"name"`
@@ -245,13 +252,24 @@ func (s *MonitorCenterService) GetOpenAIStatus(ctx context.Context) (*MonitorCen
 
 func (s *MonitorCenterService) GetOpenAIHistory(ctx context.Context, start, end time.Time) (*MonitorCenterOpenAIHistory, error) {
 	if s == nil || s.repo == nil {
-		return &MonitorCenterOpenAIHistory{StartTime: start, EndTime: end, Bucket: "minute", Points: []MonitorCenterOpenAIHistoryPoint{}}, nil
+		return emptyMonitorCenterOpenAIHistory(start, end), nil
 	}
 	points, err := s.repo.ListMonitorCenterOpenAIHistory(ctx, start, end)
 	if err != nil {
 		return nil, err
 	}
-	return &MonitorCenterOpenAIHistory{StartTime: start, EndTime: end, Bucket: "minute", Points: points}, nil
+	incidents, err := s.repo.ListMonitorCenterIncidents(ctx, start, end)
+	if err != nil {
+		return nil, err
+	}
+	return &MonitorCenterOpenAIHistory{
+		StartTime:  start,
+		EndTime:    end,
+		Bucket:     "minute",
+		Points:     points,
+		Statistics: monitorCenterHistoryStatistics(points),
+		Incidents:  incidents,
+	}, nil
 }
 
 func (s *MonitorCenterService) GetProbe(ctx context.Context, start, end time.Time) (*MonitorCenterProbe, error) {
@@ -278,7 +296,7 @@ func (s *MonitorCenterService) RefreshOpenAIStatus(ctx context.Context) error {
 	latencyMs := int(time.Since(startedAt) / time.Millisecond)
 	now := time.Now().UTC()
 	if err != nil {
-		s.recordFetchFailure(ctx, now, latencyMs)
+		s.recordFetchFailure(ctx, now, latencyMs, err)
 		return err
 	}
 
@@ -290,7 +308,7 @@ func (s *MonitorCenterService) RefreshOpenAIStatus(ctx context.Context) error {
 		}
 		if current == nil {
 			err := fmt.Errorf("openai status returned 304 without a cached snapshot")
-			s.recordFetchFailure(ctx, now, latencyMs)
+			s.recordFetchFailure(ctx, now, latencyMs, err)
 			return err
 		}
 		current.LastAttemptAt = timePointer(now)
@@ -402,6 +420,22 @@ func (s *MonitorCenterService) persistSample(ctx context.Context, status *Monito
 	if err := s.repo.UpsertMonitorCenterIncidentUpdates(ctx, status.Incidents); err != nil {
 		slog.Warn("monitor center: persist OpenAI incident updates failed", "error", err)
 	}
+	observedAt := time.Now().UTC()
+	if status.LastAttemptAt != nil {
+		observedAt = status.LastAttemptAt.UTC()
+	}
+	if err := s.repo.UpsertMonitorCenterIncidents(ctx, observedAt, status.Incidents); err != nil {
+		slog.Warn("monitor center: persist OpenAI incidents failed", "error", err)
+	}
+	activeIncidentIDs := make([]string, 0, len(status.Incidents))
+	for _, incident := range status.Incidents {
+		if incident.ID != "" && !strings.EqualFold(incident.Status, "resolved") {
+			activeIncidentIDs = append(activeIncidentIDs, incident.ID)
+		}
+	}
+	if err := s.repo.ResolveMissingMonitorCenterIncidents(ctx, observedAt, activeIncidentIDs); err != nil {
+		slog.Warn("monitor center: reconcile resolved OpenAI incidents failed", "error", err)
+	}
 	if time.Now().UTC().Minute() == 0 {
 		if err := s.repo.DeleteMonitorCenterOpenAIBefore(ctx, time.Now().UTC().Add(-monitorCenterRetention)); err != nil {
 			slog.Warn("monitor center: prune OpenAI history failed", "error", err)
@@ -409,7 +443,7 @@ func (s *MonitorCenterService) persistSample(ctx context.Context, status *Monito
 	}
 }
 
-func (s *MonitorCenterService) recordFetchFailure(ctx context.Context, now time.Time, latencyMs int) {
+func (s *MonitorCenterService) recordFetchFailure(ctx context.Context, now time.Time, latencyMs int, fetchErr error) {
 	current := s.currentStatus()
 	if current == nil {
 		current = unknownMonitorCenterOpenAIStatus()
@@ -419,7 +453,16 @@ func (s *MonitorCenterService) recordFetchFailure(ctx context.Context, now time.
 	current.FetchLatencyMs = latencyMs
 	current.Stale = true
 	s.publish(current, s.currentContentHash(), s.currentETag(), s.currentLastModified())
-	s.persistSample(ctx, current, false)
+	s.storeRedisCache(ctx)
+	if s.repo != nil {
+		point := monitorCenterHistoryPoint(current)
+		if fetchErr != nil {
+			point.FailureReason = monitorCenterFailureReason(fetchErr)
+		}
+		if err := s.repo.UpsertMonitorCenterOpenAIHistory(ctx, point); err != nil {
+			slog.Warn("monitor center: persist OpenAI fetch failure failed", "error", err)
+		}
+	}
 }
 
 func (s *MonitorCenterService) publish(status *MonitorCenterOpenAIStatus, hash, etag, modified string) {
@@ -537,6 +580,11 @@ func normalizeMonitorCenterOpenAIStatus(payload *openAISummaryPayload, now time.
 		incident := MonitorCenterIncident{
 			ID: source.ID, Name: source.Name, Status: source.Status, Impact: source.Impact, UpdatedAt: source.UpdatedAt.UTC(),
 			AffectedComponents: make([]string, 0, len(source.Components)),
+			AffectedGroups:     make([]string, 0, len(monitorCenterOpenAIGroupRules)),
+			CreatedAt:          utcTimePointer(source.CreatedAt),
+			StartedAt:          utcTimePointer(source.StartedAt),
+			ResolvedAt:         utcTimePointer(source.ResolvedAt),
+			URL:                strings.TrimSpace(source.Shortlink),
 			Updates:            make([]MonitorCenterIncidentUpdate, 0, len(source.IncidentUpdates)),
 		}
 		for _, component := range source.Components {
@@ -544,6 +592,7 @@ func normalizeMonitorCenterOpenAIStatus(payload *openAISummaryPayload, now time.
 				incident.AffectedComponents = append(incident.AffectedComponents, name)
 			}
 		}
+		incident.AffectedGroups = monitorCenterIncidentGroups(incident.AffectedComponents)
 		for _, sourceUpdate := range source.IncidentUpdates {
 			incident.Updates = append(incident.Updates, MonitorCenterIncidentUpdate{
 				Status: sourceUpdate.Status, Body: sourceUpdate.Body, UpdatedAt: sourceUpdate.UpdatedAt.UTC(),
@@ -645,8 +694,110 @@ func monitorCenterHistoryPoint(status *MonitorCenterOpenAIStatus) *MonitorCenter
 		ActiveIncidentCount: len(status.Incidents),
 		FetchStatus:         status.FetchStatus,
 		LatencyMs:           status.FetchLatencyMs,
+		IncidentRefs:        monitorCenterIncidentRefs(status.Incidents),
 	}
 	return point
+}
+
+func monitorCenterIncidentGroups(componentNames []string) []string {
+	groups := make([]string, 0, len(monitorCenterOpenAIGroupRules))
+	for _, groupRule := range monitorCenterOpenAIGroupRules {
+		matched := false
+		for _, componentRule := range groupRule.Components {
+			for _, affectedName := range componentNames {
+				for _, alias := range componentRule.Aliases {
+					if strings.EqualFold(strings.TrimSpace(affectedName), strings.TrimSpace(alias)) {
+						matched = true
+						break
+					}
+				}
+			}
+		}
+		if matched {
+			groups = append(groups, groupRule.Key)
+		}
+	}
+	return groups
+}
+
+func monitorCenterIncidentRefs(incidents []MonitorCenterIncident) map[string][]string {
+	refs := map[string][]string{}
+	for _, incident := range incidents {
+		if incident.ID == "" || strings.EqualFold(incident.Status, "resolved") {
+			continue
+		}
+		refs["all"] = append(refs["all"], incident.ID)
+		for _, group := range incident.AffectedGroups {
+			refs[group] = append(refs[group], incident.ID)
+		}
+	}
+	return refs
+}
+
+func monitorCenterHistoryStatistics(points []MonitorCenterOpenAIHistoryPoint) MonitorCenterOpenAIHistoryStatistics {
+	stats := MonitorCenterOpenAIHistoryStatistics{Groups: map[string]MonitorCenterOpenAIGroupStatistics{}}
+	stats.SampleCount = len(points)
+	latencyTotal := 0
+	for _, point := range points {
+		if point.FetchStatus == monitorCenterFetchStatusSuccess {
+			stats.SuccessfulCount++
+			latencyTotal += point.LatencyMs
+		}
+		if point.FetchStatus != monitorCenterFetchStatusSuccess || point.APIStatus != MonitorCenterStatusOperational || point.ChatGPTStatus != MonitorCenterStatusOperational || point.CodexStatus != MonitorCenterStatusOperational {
+			stats.AnomalyCount++
+		}
+		for key, value := range map[string]string{"api": point.APIStatus, "chatgpt": point.ChatGPTStatus, "codex": point.CodexStatus} {
+			group := stats.Groups[key]
+			group.SampleCount++
+			if point.FetchStatus == monitorCenterFetchStatusSuccess && value != MonitorCenterStatusUnknown {
+				group.KnownSampleCount++
+				if value == MonitorCenterStatusOperational {
+					group.OperationalCount++
+				}
+			}
+			stats.Groups[key] = group
+		}
+	}
+	if stats.SampleCount > 0 {
+		stats.FetchSuccessPct = float64(stats.SuccessfulCount) / float64(stats.SampleCount) * 100
+	}
+	if stats.SuccessfulCount > 0 {
+		stats.AverageLatencyMs = float64(latencyTotal) / float64(stats.SuccessfulCount)
+	}
+	for key, group := range stats.Groups {
+		if group.KnownSampleCount > 0 {
+			group.AvailabilityPct = float64(group.OperationalCount) / float64(group.KnownSampleCount) * 100
+		}
+		stats.Groups[key] = group
+	}
+	return stats
+}
+
+func emptyMonitorCenterOpenAIHistory(start, end time.Time) *MonitorCenterOpenAIHistory {
+	return &MonitorCenterOpenAIHistory{
+		StartTime: start, EndTime: end, Bucket: "minute",
+		Points:     []MonitorCenterOpenAIHistoryPoint{},
+		Statistics: monitorCenterHistoryStatistics(nil),
+		Incidents:  []MonitorCenterIncident{},
+	}
+}
+
+func monitorCenterFailureReason(err error) string {
+	if err == nil {
+		return ""
+	}
+	value := strings.TrimSpace(err.Error())
+	if len(value) > 300 {
+		value = value[:300]
+	}
+	return value
+}
+
+func utcTimePointer(value *time.Time) *time.Time {
+	if value == nil || value.IsZero() {
+		return nil
+	}
+	return timePointer(value.UTC())
 }
 
 func monitorCenterGroupStatus(groups []MonitorCenterServiceGroup, key string) string {
@@ -716,9 +867,6 @@ func cloneMonitorCenterStatus(status *MonitorCenterOpenAIStatus) *MonitorCenterO
 	var cloned MonitorCenterOpenAIStatus
 	if err := json.Unmarshal(payload, &cloned); err != nil {
 		return nil
-	}
-	for i := range status.Incidents {
-		cloned.Incidents[i].Updates = append([]MonitorCenterIncidentUpdate{}, status.Incidents[i].Updates...)
 	}
 	return &cloned
 }
