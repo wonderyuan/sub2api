@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/redis/go-redis/v9"
 )
 
 const (
@@ -25,8 +24,6 @@ const (
 	monitorCenterRetryDelay         = 300 * time.Millisecond
 	monitorCenterCacheTTL           = 3 * time.Minute
 	monitorCenterRetention          = 72 * time.Hour
-	monitorCenterRedisStatusKey     = "monitor-center:openai:status:v1"
-	monitorCenterRedisPollLockKey   = "monitor-center:openai:poll-lock:v1"
 	monitorCenterRedisPollLockTTL   = 55 * time.Second
 	monitorCenterMaxResponseBytes   = 2 << 20
 	monitorCenterFetchStatusSuccess = "success"
@@ -43,6 +40,12 @@ type monitorCenterRepository interface {
 	ListMonitorCenterIncidents(ctx context.Context, start, end time.Time) ([]MonitorCenterIncident, error)
 	DeleteMonitorCenterOpenAIBefore(ctx context.Context, before time.Time) error
 	LoadLatestMonitorCenterOpenAIEventHash(ctx context.Context) (string, error)
+}
+
+type MonitorCenterCache interface {
+	TryAcquireMonitorCenterPollLock(ctx context.Context, owner string, ttl time.Duration) (bool, error)
+	StoreMonitorCenterOpenAIStatus(ctx context.Context, payload []byte, ttl time.Duration) error
+	LoadMonitorCenterOpenAIStatus(ctx context.Context) ([]byte, error)
 }
 
 type monitorCenterCacheEnvelope struct {
@@ -130,7 +133,7 @@ type openAISummaryPayload struct {
 type MonitorCenterService struct {
 	repo           monitorCenterRepository
 	channelMonitor *ChannelMonitorService
-	redisClient    *redis.Client
+	cache          MonitorCenterCache
 	httpClient     *http.Client
 	instanceID     string
 
@@ -150,13 +153,13 @@ type MonitorCenterService struct {
 func NewMonitorCenterService(
 	opsRepo OpsRepository,
 	channelMonitor *ChannelMonitorService,
-	redisClient *redis.Client,
+	cache MonitorCenterCache,
 ) *MonitorCenterService {
 	repo, _ := opsRepo.(monitorCenterRepository)
 	return &MonitorCenterService{
 		repo:           repo,
 		channelMonitor: channelMonitor,
-		redisClient:    redisClient,
+		cache:          cache,
 		httpClient:     &http.Client{Timeout: monitorCenterHTTPTimeout},
 		instanceID:     uuid.NewString(),
 		stopCh:         make(chan struct{}),
@@ -167,9 +170,9 @@ func NewMonitorCenterService(
 func ProvideMonitorCenterService(
 	opsRepo OpsRepository,
 	channelMonitor *ChannelMonitorService,
-	redisClient *redis.Client,
+	cache MonitorCenterCache,
 ) *MonitorCenterService {
-	svc := NewMonitorCenterService(opsRepo, channelMonitor, redisClient)
+	svc := NewMonitorCenterService(opsRepo, channelMonitor, cache)
 	svc.Start()
 	return svc
 }
@@ -499,10 +502,10 @@ func (s *MonitorCenterService) currentLastModified() string {
 }
 
 func (s *MonitorCenterService) acquirePollLock(ctx context.Context) bool {
-	if s.redisClient == nil {
+	if s.cache == nil {
 		return true
 	}
-	ok, err := s.redisClient.SetNX(ctx, monitorCenterRedisPollLockKey, s.instanceID, monitorCenterRedisPollLockTTL).Result()
+	ok, err := s.cache.TryAcquireMonitorCenterPollLock(ctx, s.instanceID, monitorCenterRedisPollLockTTL)
 	if err != nil {
 		slog.Warn("monitor center: Redis poll lock unavailable; using process-local lock", "error", err)
 		return true
@@ -511,7 +514,7 @@ func (s *MonitorCenterService) acquirePollLock(ctx context.Context) bool {
 }
 
 func (s *MonitorCenterService) storeRedisCache(ctx context.Context) {
-	if s.redisClient == nil {
+	if s.cache == nil {
 		return
 	}
 	envelope := monitorCenterCacheEnvelope{
@@ -524,16 +527,16 @@ func (s *MonitorCenterService) storeRedisCache(ctx context.Context) {
 	if err != nil {
 		return
 	}
-	if err := s.redisClient.Set(ctx, monitorCenterRedisStatusKey, payload, monitorCenterCacheTTL).Err(); err != nil {
+	if err := s.cache.StoreMonitorCenterOpenAIStatus(ctx, payload, monitorCenterCacheTTL); err != nil {
 		slog.Warn("monitor center: Redis status cache write failed", "error", err)
 	}
 }
 
 func (s *MonitorCenterService) loadRedisCache(ctx context.Context) {
-	if s == nil || s.redisClient == nil {
+	if s == nil || s.cache == nil {
 		return
 	}
-	payload, err := s.redisClient.Get(ctx, monitorCenterRedisStatusKey).Bytes()
+	payload, err := s.cache.LoadMonitorCenterOpenAIStatus(ctx)
 	if err != nil {
 		return
 	}
