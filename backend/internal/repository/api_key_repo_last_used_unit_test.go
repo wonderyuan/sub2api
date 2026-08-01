@@ -206,7 +206,7 @@ func TestAPIKeyRepository_UpdatePersistsRegeneratedKey(t *testing.T) {
 
 	oldKey := key.Key
 	key.Key = "sk-after-regenerate"
-	require.NoError(t, repo.Update(ctx, key))
+	require.NoError(t, repo.Update(ctx, key, service.APIKeyUpdateFields{Key: true}))
 
 	persisted, err := repo.GetByID(ctx, key.ID)
 	require.NoError(t, err)
@@ -214,6 +214,34 @@ func TestAPIKeyRepository_UpdatePersistsRegeneratedKey(t *testing.T) {
 
 	_, err = repo.GetByKey(ctx, oldKey)
 	require.Error(t, err, "the old secret must no longer identify the API key")
+}
+
+func TestAPIKeyRepository_UpdatePersistsScopedSevenDayFields(t *testing.T) {
+	repo, client := newAPIKeyRepoSQLite(t)
+	ctx := context.Background()
+	user := mustCreateAPIKeyRepoUser(t, ctx, client, "scoped-seven-day@test.com")
+
+	key := &service.APIKey{
+		UserID: user.ID,
+		Key:    "sk-scoped-seven-day",
+		Name:   "Scoped Seven Day",
+		Status: service.StatusActive,
+	}
+	require.NoError(t, repo.Create(ctx, key))
+
+	windowStart := time.Now().UTC().Add(-7 * 24 * time.Hour).Truncate(time.Second)
+	key.Usage7d = 12.5
+	key.Window7dStart = &windowStart
+	require.NoError(t, repo.Update(ctx, key, service.APIKeyUpdateFields{
+		Usage7d:       true,
+		Window7dStart: true,
+	}))
+
+	persisted, err := repo.GetByID(ctx, key.ID)
+	require.NoError(t, err)
+	require.Equal(t, 12.5, persisted.Usage7d)
+	require.NotNil(t, persisted.Window7dStart)
+	require.WithinDuration(t, windowStart, *persisted.Window7dStart, time.Second)
 }
 
 func TestAPIKeyRepository_UpdateLastUsedDeletedKey(t *testing.T) {

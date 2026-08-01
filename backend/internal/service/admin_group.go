@@ -1078,7 +1078,7 @@ func (s *adminServiceImpl) AdminUpdateAPIKeyGroupID(ctx context.Context, keyID i
 			if addErr := s.userRepo.AddGroupToAllowedGroups(opCtx, apiKey.UserID, gid); addErr != nil {
 				return nil, fmt.Errorf("add group to user allowed groups: %w", addErr)
 			}
-			if err := s.apiKeyRepo.Update(opCtx, apiKey); err != nil {
+			if err := s.apiKeyRepo.Update(opCtx, apiKey, APIKeyUpdateFields{GroupID: true}); err != nil {
 				return nil, fmt.Errorf("update api key: %w", err)
 			}
 			if tx != nil {
@@ -1102,7 +1102,7 @@ func (s *adminServiceImpl) AdminUpdateAPIKeyGroupID(ctx context.Context, keyID i
 	}
 
 	// 非专属分组 / 解绑：无需事务，单步更新即可
-	if err := s.apiKeyRepo.Update(ctx, apiKey); err != nil {
+	if err := s.apiKeyRepo.Update(ctx, apiKey, APIKeyUpdateFields{GroupID: true}); err != nil {
 		return nil, fmt.Errorf("update api key: %w", err)
 	}
 
@@ -1127,7 +1127,7 @@ func (s *adminServiceImpl) AdminResetAPIKeyRateLimitUsage(ctx context.Context, k
 	apiKey.Window5hStart = nil
 	apiKey.Window1dStart = nil
 	apiKey.Window7dStart = nil
-	if err := s.apiKeyRepo.Update(ctx, apiKey); err != nil {
+	if err := s.apiKeyRepo.Update(ctx, apiKey, APIKeyUpdateFields{RateLimitUsage: true}); err != nil {
 		return nil, fmt.Errorf("reset api key rate limit usage: %w", err)
 	}
 	if s.authCacheInvalidator != nil {
@@ -1172,6 +1172,7 @@ func (s *adminServiceImpl) AdminBatchSyncAPIKey7dWindow(ctx context.Context, key
 	windowStart := resetAt.Add(-RateLimitWindow7d)
 	return s.adminBatchUpdateAPIKeys(ctx, keyIDs, groupID,
 		func(apiKey *APIKey) { apiKey.Window7dStart = &windowStart },
+		APIKeyUpdateFields{Window7dStart: true},
 		func(ctx context.Context, repo adminAPIKey7dBatchRepository, ids []int64, groupID *int64) (int, error) {
 			return repo.BatchSet7dWindowStart(ctx, ids, groupID, windowStart)
 		},
@@ -1187,6 +1188,7 @@ func (s *adminServiceImpl) AdminBatchResetAPIKey7dUsage(ctx context.Context, key
 		func(apiKey *APIKey) {
 			apiKey.Usage7d = 0
 		},
+		APIKeyUpdateFields{Usage7d: true},
 		func(ctx context.Context, repo adminAPIKey7dBatchRepository, ids []int64, groupID *int64) (int, error) {
 			return repo.BatchReset7dUsage(ctx, ids, groupID)
 		},
@@ -1198,6 +1200,7 @@ func (s *adminServiceImpl) adminBatchUpdateAPIKeys(
 	keyIDs []int64,
 	groupID int64,
 	update func(*APIKey),
+	updateFields APIKeyUpdateFields,
 	batchUpdate func(context.Context, adminAPIKey7dBatchRepository, []int64, *int64) (int, error),
 ) ([]*APIKey, error) {
 	ids, err := normalizeAdminAPIKeyBatchIDs(keyIDs)
@@ -1239,7 +1242,7 @@ func (s *adminServiceImpl) adminBatchUpdateAPIKeys(
 	} else {
 		for _, apiKey := range apiKeys {
 			update(apiKey)
-			if updateErr := s.apiKeyRepo.Update(opCtx, apiKey); updateErr != nil {
+			if updateErr := s.apiKeyRepo.Update(opCtx, apiKey, updateFields); updateErr != nil {
 				return nil, fmt.Errorf("update api key %d: %w", apiKey.ID, updateErr)
 			}
 		}

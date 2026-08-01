@@ -175,6 +175,12 @@ func TestPromptAuditFullPromptReadIsAudited(t *testing.T) {
 	require.Equal(t, "/api/v1/admin/prompt-audit/events/:id", repository.logs[0].Path)
 }
 
+func TestPasskeyLoginAuditUsesCanonicalLoginActionAndOmitsCredentialBody(t *testing.T) {
+	route := "POST /api/v1/auth/passkey/login/finish"
+	require.Equal(t, service.AuditActionLogin, auditActionOverrides[route])
+	require.Contains(t, auditBodyOmittedRoutes, route)
+}
+
 // Ollama session bodies contain browser cookies, so the entire body must be omitted from audit logs.
 func TestOllamaCloudUsageSessionRouteOmitsAuditBody(t *testing.T) {
 	gin.SetMode(gin.TestMode)
