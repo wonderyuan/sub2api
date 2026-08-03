@@ -56,7 +56,34 @@ export default {
     viewUsage: 'View Usage',
     checkDetailedLogs: 'Check detailed usage logs',
     redeemCode: 'Redeem Code',
-    addBalanceWithCode: 'Add balance with a code'
+    addBalanceWithCode: 'Add balance with a code',
+    modelRecommendations: {
+      title: 'Model Recommendations',
+      updatedAt: 'Updated {time}',
+      refresh: 'Refresh model recommendations',
+      station: "Editor's Picks",
+      intelligence: 'Intelligence Picks',
+      unavailable: 'Model recommendations are temporarily unavailable.',
+      samples: 'N',
+      price: 'Price',
+      time: 'Time',
+      minutes: 'm',
+      best: 'Best balance of intelligence, price, and response time',
+      efforts: {
+        low: 'Low',
+        medium: 'Medium',
+        high: 'High',
+        xhigh: 'XHigh',
+        max: 'Max',
+        ultra: 'Ultra'
+      },
+      stationCategories: {
+        dailyDevelopment: 'Daily Development',
+        hardProblems: 'Hard Problems',
+        backgroundAutomation: 'Background Automation',
+        lobsterTasks: 'Lobster Tasks'
+      }
+    }
   },
 
   // Groups (shared)

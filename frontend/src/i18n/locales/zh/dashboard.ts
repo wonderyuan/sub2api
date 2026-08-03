@@ -56,7 +56,34 @@ export default {
     viewUsage: '查看使用记录',
     checkDetailedLogs: '查看详细的使用日志',
     redeemCode: '兑换码',
-    addBalanceWithCode: '使用兑换码充值'
+    addBalanceWithCode: '使用兑换码充值',
+    modelRecommendations: {
+      title: '模型推荐',
+      updatedAt: '更新于 {time}',
+      refresh: '刷新模型推荐',
+      station: '站长推荐',
+      intelligence: '智力推荐',
+      unavailable: '模型推荐暂时不可用。',
+      samples: '样本',
+      price: '价格',
+      time: '耗时',
+      minutes: '分',
+      best: '智力、价格和响应时间的最佳平衡',
+      efforts: {
+        low: '低',
+        medium: '中',
+        high: '高',
+        xhigh: '超高',
+        max: '最高',
+        ultra: '极限'
+      },
+      stationCategories: {
+        dailyDevelopment: '日常开发',
+        hardProblems: '难题攻坚',
+        backgroundAutomation: '后台自动化',
+        lobsterTasks: '跑龙虾类任务'
+      }
+    }
   },
 
   // Groups (shared)
