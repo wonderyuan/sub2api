@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import UserDashboardModelRecommendations from '../UserDashboardModelRecommendations.vue'
+import ModelIcon from '@/components/common/ModelIcon.vue'
 import type { CodexRadarDashboardRecommendations } from '@/api/usage'
 
 vi.mock('vue-i18n', async () => {
@@ -39,22 +40,64 @@ describe('UserDashboardModelRecommendations', () => {
     const wrapper = mount(UserDashboardModelRecommendations, { props: { data } })
 
     expect(wrapper.text()).toContain('dashboard.modelRecommendations.station')
-    expect(wrapper.text()).toContain('gpt-5.5')
-    expect(wrapper.text()).toContain('gpt-5.6-luna')
+    expect(wrapper.text()).toContain('5.5')
+    expect(wrapper.text()).toContain('5.6 Luna Max')
   })
 
   it('groups models, sorts reasoning effort, and marks the best price-time-IQ balance', () => {
     const wrapper = mount(UserDashboardModelRecommendations, { props: { data } })
 
-    const solEfforts = wrapper.findAll('[data-effort]').slice(0, 3).map((entry) => entry.attributes('data-effort'))
+    const solEfforts = wrapper.findAll('.intelligence-card[data-effort]').slice(0, 3).map((entry) => entry.attributes('data-effort'))
     expect(solEfforts).toEqual(['high', 'medium', 'low'])
     expect(wrapper.find('[data-best-combination="gpt-5.6-sol|medium"]').exists()).toBe(true)
+  })
+
+  it('shows recommendation metrics as compact values instead of progress tracks', () => {
+    const wrapper = mount(UserDashboardModelRecommendations, { props: { data } })
+
+    expect(wrapper.find('.iq-profile-track').exists()).toBe(false)
+    expect(wrapper.find('.signal-track').exists()).toBe(false)
+    expect(wrapper.text()).toContain('dashboard.modelRecommendations.reasoningStrength')
+    expect(wrapper.text()).toContain('dashboard.modelRecommendations.iqScore')
+  })
+
+  it('keeps reasoning effort names aligned with the full model variant name', () => {
+    const wrapper = mount(UserDashboardModelRecommendations, {
+      props: {
+        data: {
+          ...data,
+          intelligence_recommendations: [
+            { model: 'gpt-5.6-sol', effort: 'ultra', iq: 105.8, samples: 112, average_cost_usd: 21.89, average_duration_minutes: 53 },
+            { model: 'gpt-5.6-sol', effort: 'max', iq: 107.1, samples: 112, average_cost_usd: 9.57, average_duration_minutes: 35 }
+          ]
+        }
+      }
+    })
+
+    expect(wrapper.text()).toContain('5.6 Sol Ultra')
+    expect(wrapper.text()).toContain('5.6 Sol Max')
+  })
+
+  it('uses the model provider mark with a color that represents reasoning strength', () => {
+    const wrapper = mount(UserDashboardModelRecommendations, { props: { data } })
+    const modelIcons = wrapper.findAllComponents(ModelIcon)
+
+    expect(modelIcons.some((icon) => icon.props('model') === 'gpt-5.6-sol' && icon.props('color') === '#14b8a6')).toBe(true)
+    expect(modelIcons.some((icon) => icon.props('model') === 'gpt-5.6-luna' && icon.props('color') === '#f59e0b')).toBe(true)
   })
 
   it('emits refresh from the icon button', async () => {
     const wrapper = mount(UserDashboardModelRecommendations, { props: { data } })
 
     await wrapper.find('[data-model-recommendations-refresh]').trigger('click')
+
+    expect(wrapper.emitted('refresh')).toHaveLength(1)
+  })
+
+  it('emits refresh from the intelligence section action', async () => {
+    const wrapper = mount(UserDashboardModelRecommendations, { props: { data } })
+
+    await wrapper.find('[data-intelligence-recommendations-refresh]').trigger('click')
 
     expect(wrapper.emitted('refresh')).toHaveLength(1)
   })
