@@ -55,6 +55,8 @@ describe('UserDashboardModelRecommendations', () => {
     const wrapper = mount(UserDashboardModelRecommendations, { props: { data } })
 
     expect(wrapper.find('[data-intelligence-mode="rail"]').attributes('aria-pressed')).toBe('true')
+    expect(wrapper.find('[data-intelligence-groups]').classes()).toEqual(expect.arrayContaining(['md:grid-cols-2', 'xl:grid-cols-3']))
+    expect(wrapper.find('.intelligence-rail-row').classes()).toContain('sm:grid-cols-[58px_minmax(7rem,15rem)_62px_90px]')
     expect(wrapper.findAll('.iq-track')).toHaveLength(4)
     expect(wrapper.findAll('.station-choice')).toHaveLength(2)
   })

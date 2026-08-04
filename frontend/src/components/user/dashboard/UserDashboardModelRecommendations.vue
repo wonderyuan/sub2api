@@ -108,7 +108,7 @@
           </div>
         </div>
 
-        <div class="grid grid-cols-1 gap-3 lg:grid-cols-2">
+        <div class="intelligence-groups-grid grid w-full grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3" data-intelligence-groups>
           <section v-for="group in intelligenceGroups" :key="group.model" class="intelligence-group self-start overflow-hidden rounded-xl border bg-white dark:bg-dark-800/60" :data-model="group.model" :style="modelStyle(group.model)">
             <header class="flex items-center justify-between border-b border-gray-100 px-3.5 py-2.5 dark:border-dark-700">
               <div class="flex min-w-0 items-center gap-2"><span class="model-mark">{{ modelInitial(group.model) }}</span><h4 class="truncate font-mono text-sm font-bold text-gray-900 dark:text-white">{{ modelDisplayName(group.model) }}</h4></div>
@@ -116,7 +116,7 @@
             </header>
 
             <div v-if="intelligenceMode === 'rail'" class="space-y-1.5 p-3">
-              <article v-for="item in group.items" :key="intelligenceItemKey(item)" class="intelligence-rail-row grid items-center gap-2 rounded-lg px-2 py-1.5 sm:grid-cols-[58px_1fr_62px_90px]" :data-effort="item.effort">
+              <article v-for="item in group.items" :key="intelligenceItemKey(item)" class="intelligence-rail-row grid items-center gap-2 rounded-lg px-2 py-1.5 sm:grid-cols-[58px_minmax(7rem,15rem)_62px_90px]" :data-effort="item.effort">
                 <span class="effort-name">{{ effortLabel(item.effort) }}</span>
                 <div class="iq-track" :title="`IQ ${formatIQ(item.iq)}`"><span :style="{ width: iqBarWidth(item.iq) }"></span></div>
                 <div class="flex items-baseline justify-end gap-1"><strong class="model-iq font-mono text-base leading-none">{{ formatIQ(item.iq) }}</strong><span class="text-[8px] font-bold text-gray-400">IQ</span></div>
@@ -1074,6 +1074,10 @@ function isBest(group: IntelligenceGroup, item: CodexRadarIntelligenceMetric): b
   transition: border-color 160ms ease-out, box-shadow 160ms ease-out;
 }
 
+.intelligence-groups-grid {
+  max-width: 96rem;
+}
+
 .station-scene:hover { border-color: rgba(20, 184, 166, 0.32); box-shadow: 0 6px 16px rgba(15, 23, 42, 0.05); }
 .station-index[data-index='2'] { color: #3b82a5; background: #e8f5fb; }
 .station-index[data-index='3'] { color: #7666a8; background: #f0edfb; }
@@ -1161,7 +1165,7 @@ function isBest(group: IntelligenceGroup, item: CodexRadarIntelligenceMetric): b
 
 @media (max-width: 639px) {
   .summary-cell + .summary-cell { border-top: 1px solid #e5e7eb; border-left: 0; }
-  .intelligence-rail-row { grid-template-columns: 3.25rem minmax(0, 1fr) 3.75rem; }
+  .intelligence-rail-row { grid-template-columns: 3.25rem minmax(0, 15rem) 3.75rem; }
   .intelligence-rail-row > :last-child { grid-column: 2 / 4; }
 }
 
