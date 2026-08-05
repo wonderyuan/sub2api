@@ -34,6 +34,7 @@ const (
 	openaiQuotaSecFetchSite     = "none"
 	openaiQuotaSecFetchMode     = "no-cors"
 	openaiQuotaSecFetchDest     = "empty"
+	openaiQuotaResetCreditsKey  = "codex_reset_credit_snapshot"
 )
 
 // OpenAIRateLimitWindow describes a single rate-limit window returned by
@@ -189,7 +190,6 @@ func (s *OpenAIQuotaService) QueryUsage(ctx context.Context, accountID int64) (*
 	payload.FetchedAt = time.Now().Unix()
 	details := s.queryResetCreditDetails(callCtx, client, accessToken, chatGPTAccountID, fedRAMP, accountID)
 	payload.RateLimitResetCredits = mergeOpenAIResetCreditDetails(payload.RateLimitResetCredits, details)
-	s.persistResetCreditSnapshot(ctx, accountID, payload.RateLimitResetCredits)
 	return &payload, nil
 }
 
@@ -212,26 +212,37 @@ func mergeOpenAIResetCreditDetails(credits *OpenAIRateLimitResetCredits, details
 	return credits
 }
 
-// persistResetCreditSnapshot stores only successful, explicit reset-credit
-// results. A missing upstream surface remains "not queried" rather than being
-// silently converted into a zero-card snapshot.
-func (s *OpenAIQuotaService) persistResetCreditSnapshot(ctx context.Context, accountID int64, credits *OpenAIRateLimitResetCredits) {
-	if s == nil || s.accountRepo == nil || credits == nil {
-		return
-	}
-	account, err := s.accountRepo.GetByID(ctx, accountID)
-	if err != nil || !SupportsOpenAIResetCredits(account) {
-		return
+// CacheResetCreditsSnapshot persists a complete reset-credit snapshot after an
+// explicit UI refresh. The snapshot is written to the account that was queried
+// (for a spark shadow that is the shadow row, even though the credits belong to
+// its parent) because it is a per-row display cache: each row caches exactly
+// what its own card renders, and shadows cannot consume credits anyway.
+//
+// Missing expiration details leave the old cache intact:
+// a snapshot claiming N>0 available credits without their expiration timestamps
+// cannot be aged out by readers, so it would keep showing (and offering to
+// consume) credits that already expired. Callers must treat this rejection as a
+// partial success — the upstream read itself is still valid.
+func (s *OpenAIQuotaService) CacheResetCreditsSnapshot(ctx context.Context, accountID int64, credits *OpenAIRateLimitResetCredits) error {
+	if credits == nil || (credits.AvailableCount > 0 && len(credits.Credits) == 0) {
+		return infraerrors.New(
+			http.StatusBadGateway,
+			"OPENAI_QUOTA_RESET_CREDITS_REFRESH_FAILED",
+			"failed to refresh reset-credit expiration details; cached data was preserved",
+		)
 	}
 	snapshot := newOpenAIResetCreditSnapshot(credits, time.Now())
-	if snapshot == nil {
-		return
-	}
 	if err := s.accountRepo.UpdateExtra(ctx, accountID, map[string]any{
+		openaiQuotaResetCreditsKey:        credits,
 		OpenAIResetCreditSnapshotExtraKey: snapshot,
 	}); err != nil {
-		slog.Warn("openai_quota_reset_credit_snapshot_persist_failed", "account_id", accountID, "error", err)
+		return infraerrors.New(
+			http.StatusInternalServerError,
+			"OPENAI_QUOTA_CACHE_WRITE_FAILED",
+			"failed to cache reset-credit details",
+		).WithCause(err)
 	}
+	return nil
 }
 
 func (s *OpenAIQuotaService) queryResetCreditDetails(ctx context.Context, client *req.Client, accessToken, chatGPTAccountID string, fedRAMP bool, accountID int64) *openAIRateLimitResetCreditDetails {
@@ -348,7 +359,9 @@ func (s *OpenAIQuotaService) ResetCredit(ctx context.Context, accountID int64) (
 	// request is best-effort: the reset itself must still succeed if upstream
 	// does not return the follow-up snapshot.
 	if credits := mergeOpenAIResetCreditDetails(nil, s.queryResetCreditDetails(callCtx, client, accessToken, chatGPTAccountID, fedRAMP, accountID)); credits != nil {
-		s.persistResetCreditSnapshot(ctx, accountID, credits)
+		if err := s.CacheResetCreditsSnapshot(ctx, accountID, credits); err != nil {
+			slog.Warn("openai_quota_reset_credit_snapshot_persist_failed", "account_id", accountID, "error", err)
+		}
 	}
 	return &payload, nil
 }
