@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
@@ -113,7 +114,7 @@ func (h *OpenAIGatewayHandler) GrokRealtime(c *gin.Context) {
 	defer func() { _ = conn.CloseNow() }()
 
 	turn := 0
-	sessionDuration, proxyErr := h.gatewayService.ProxyGrokRealtime(
+	sessionDuration, audioObserved, proxyErr := h.gatewayService.ProxyGrokRealtime(
 		c.Request.Context(), c, conn, selection.Account, token, model,
 		func(event []byte) error {
 			turn++
@@ -124,16 +125,8 @@ func (h *OpenAIGatewayHandler) GrokRealtime(c *gin.Context) {
 			return h.auditGrokRealtimeEvent(c, reqLog, apiKey, subject, model, event, stage, turn)
 		},
 	)
-	// Once the upstream session starts, every exit path is billable. In
-	// particular, malformed or policy-blocked later events must not turn already
-	// consumed audio time into a free session.
-	if sessionDuration > 0 {
-		result := &service.OpenAIForwardResult{
-			RequestID:  service.StableGrokRealtimeBillingRequestID(""),
-			Model:      model,
-			Duration:   sessionDuration,
-			AudioUsage: &service.AudioUsage{Mode: "realtime", DurationOrUnits: sessionDuration.Minutes()},
-		}
+	// Bill observed audio even when a later event is malformed or audit-blocked.
+	if result := grokRealtimeBillingResult(model, sessionDuration, audioObserved); result != nil {
 		h.recordGrokVoiceUsage(c, apiKey, selection.Account, subscription, "realtime", nil, result)
 	}
 	if proxyErr != nil {
@@ -153,6 +146,18 @@ func (h *OpenAIGatewayHandler) GrokRealtime(c *gin.Context) {
 			_ = conn.Close(coderws.StatusInternalError, "upstream realtime websocket failed")
 			return
 		}
+	}
+}
+
+func grokRealtimeBillingResult(model string, elapsed time.Duration, audioObserved bool) *service.OpenAIForwardResult {
+	if !audioObserved || elapsed <= 0 {
+		return nil
+	}
+	return &service.OpenAIForwardResult{
+		RequestID:  service.StableGrokRealtimeBillingRequestID(""),
+		Model:      model,
+		Duration:   elapsed,
+		AudioUsage: &service.AudioUsage{Mode: "realtime", DurationOrUnits: elapsed.Minutes()},
 	}
 }
 
