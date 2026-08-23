@@ -80,7 +80,7 @@ func TestGrokRealtimeUpgradeFollowsHTTPHandshakeChecks(t *testing.T) {
 		require.NotEqualf(t, -1, index, "missing expected handshake check %s", handshakeCheck)
 		require.Lessf(t, index, upgradeIndex, "%s must complete before WebSocket upgrade", handshakeCheck)
 	}
-	require.Contains(t, functionSource, `acquireResponsesAccountSlot(c, apiKey.GroupID, "", selection, false, &streamStarted`, "pre-upgrade account waits must not emit streaming keepalives")
+	require.Contains(t, functionSource, `acquireResponsesAccountSlot(c, apiKey.GroupID, "", candidate, false, &streamStarted`, "pre-upgrade account waits must not emit streaming keepalives")
 }
 
 func TestGrokEntrypointsAcquireUserAndAPIKeyConcurrency(t *testing.T) {

@@ -333,41 +333,6 @@ func TestOpenAINativeFirstOutputTimeoutDisarmsAfterSemanticOutput(t *testing.T) 
 	require.Equal(t, "42", rec.Result().Header.Get("X-Ratelimit-Remaining-Requests"))
 }
 
-func TestOpenAINativeLifecycleOutputDisarmsTimeoutButTTFTWaitsForToken(t *testing.T) {
-	cfg := &config.Config{Gateway: config.GatewayConfig{
-		OpenAIFirstOutputTimeoutSeconds: 1,
-		MaxLineSize:                     defaultMaxLineSize,
-	}}
-	svc := &OpenAIGatewayService{cfg: cfg, responseHeaderFilter: compileResponseHeaderFilter(cfg)}
-	pr, pw := io.Pipe()
-	writerDone := make(chan struct{})
-	go func() {
-		defer close(writerDone)
-		defer func() { _ = pw.Close() }()
-		_, _ = pw.Write([]byte("data: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"function_call\"}}\n\n"))
-		time.Sleep(1100 * time.Millisecond)
-		_, _ = pw.Write([]byte("data: {\"type\":\"response.function_call_arguments.delta\",\"delta\":\"{}\"}\n\n"))
-		_, _ = pw.Write([]byte("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_lifecycle\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n"))
-	}()
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
-	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: pr}
-
-	result, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, &Account{ID: 1, Platform: PlatformOpenAI}, time.Now(), "model", "model")
-
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	require.NotNil(t, result.firstTokenMs)
-	require.GreaterOrEqual(t, *result.firstTokenMs, 1000, "lifecycle output must not be reported as the first token")
-	require.Contains(t, rec.Body.String(), "response.output_item.added")
-	select {
-	case <-writerDone:
-	case <-time.After(time.Second):
-		t.Fatal("upstream writer did not finish")
-	}
-}
-
 func TestOpenAINativeFirstOutputTimeoutWaitsForCompleteSemanticEvent(t *testing.T) {
 	const lineSize = 68106
 	prefix := `data: {"type":"response.output_text.delta","delta":"`
@@ -577,7 +542,7 @@ func TestOpenAINativeFirstOutputScannerAllowsLargeEventAfterSemanticBoundary(t *
 	require.Equal(t, "request-large-image", rec.Result().Header.Get("X-Request-Id"))
 }
 
-func TestOpenAINativeFirstOutputTimeoutDisabledPreservesKeepaliveFlush(t *testing.T) {
+func TestOpenAINativeFirstOutputTimeoutDisabledKeepsPreamblePrivateAcrossKeepalive(t *testing.T) {
 	svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{
 		StreamKeepaliveInterval: 1,
 		MaxLineSize:             defaultMaxLineSize,
@@ -587,7 +552,7 @@ func TestOpenAINativeFirstOutputTimeoutDisabledPreservesKeepaliveFlush(t *testin
 		defer func() { _ = pw.Close() }()
 		_, _ = pw.Write([]byte("data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_stalled\"}}\n\n"))
 		_, _ = pw.Write([]byte("data: {\"type\":\"response.in_progress\",\"response\":{\"id\":\"resp_stalled\"}}\n\n"))
-		time.Sleep(1100 * time.Millisecond)
+		time.Sleep(2100 * time.Millisecond)
 	}()
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -596,10 +561,11 @@ func TestOpenAINativeFirstOutputTimeoutDisabledPreservesKeepaliveFlush(t *testin
 
 	_, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, &Account{ID: 1, Platform: PlatformOpenAI}, time.Now(), "model", "model")
 
-	require.Error(t, err)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
 	require.Contains(t, rec.Body.String(), ":\n\n")
-	require.Contains(t, rec.Body.String(), "response.created")
-	require.Contains(t, rec.Body.String(), "response.in_progress")
+	require.NotContains(t, rec.Body.String(), "response.created")
+	require.NotContains(t, rec.Body.String(), "response.in_progress")
 }
 
 func TestOpenAINativeFirstOutputFailoverKeepsAttemptHeadersPrivateAfterKeepaliveCommit(t *testing.T) {

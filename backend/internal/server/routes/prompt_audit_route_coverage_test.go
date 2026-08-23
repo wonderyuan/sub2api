@@ -122,7 +122,7 @@ func TestGrokRealtimeWebSocketIsCoveredByPromptAudit(t *testing.T) {
 	require.NotEqual(t, -1, proxyStart)
 	proxySource := string(serviceSource)[proxyStart:]
 	auditIndex := strings.Index(proxySource, "beforeClientEvent(msg)")
-	upstreamWriteIndex := strings.Index(proxySource, "upstream.WriteJSON(ctx, raw)")
+	upstreamWriteIndex := strings.Index(proxySource, "conn.WriteJSON(ctx, raw)")
 	require.NotEqual(t, -1, auditIndex, "missing per-event prompt audit callback")
 	require.NotEqual(t, -1, upstreamWriteIndex, "missing upstream event write")
 	require.Less(t,
