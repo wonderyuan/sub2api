@@ -81,6 +81,17 @@ export default {
       alternatives: '还有这些选择',
       intelligence: '智力推荐',
       intelligenceDescription: '同一模型的不同推理强度，重点看 IQ、成本和耗时的组合。',
+      intelligenceDimension: '能力评分维度',
+      dimensions: {
+        comprehensive: '综合智能',
+        software: '软件工程能力',
+        visual: '视觉空间推理'
+      },
+      priceBand: '价格时段',
+      priceBands: {
+        offPeak: '低谷价',
+        peak: '高峰价'
+      },
       reasoningStrength: '推理强度',
       iqScore: '智力评分',
       levels: '档强度',

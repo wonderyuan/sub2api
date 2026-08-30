@@ -81,6 +81,17 @@ export default {
       alternatives: 'Other good options',
       intelligence: 'Intelligence Picks',
       intelligenceDescription: 'Compare reasoning levels by IQ, cost, and average response time.',
+      intelligenceDimension: 'Capability score dimension',
+      dimensions: {
+        comprehensive: 'Overall intelligence',
+        software: 'Software engineering',
+        visual: 'Visual-spatial reasoning'
+      },
+      priceBand: 'Pricing period',
+      priceBands: {
+        offPeak: 'Off-peak',
+        peak: 'Peak'
+      },
       reasoningStrength: 'Reasoning strength',
       iqScore: 'Intelligence score',
       levels: 'levels',
