@@ -303,6 +303,7 @@ type AccountUsageService struct {
 	grokQuotaFetcher        *GrokQuotaFetcher
 	grokQuotaService        *GrokQuotaService
 	openAIQuotaService      *OpenAIQuotaService
+	cnQuotaService          *CNProviderQuotaService
 	cache                   *UsageCache
 	identityCache           IdentityCache
 	tlsFPProfileService     *TLSFingerprintProfileService
@@ -320,6 +321,7 @@ func NewAccountUsageService(
 	grokQuotaFetcher *GrokQuotaFetcher,
 	grokQuotaService *GrokQuotaService,
 	openAIQuotaService *OpenAIQuotaService,
+	cnQuotaService *CNProviderQuotaService,
 	cache *UsageCache,
 	identityCache IdentityCache,
 	tlsFPProfileService *TLSFingerprintProfileService,
@@ -333,6 +335,7 @@ func NewAccountUsageService(
 		grokQuotaFetcher:        grokQuotaFetcher,
 		grokQuotaService:        grokQuotaService,
 		openAIQuotaService:      openAIQuotaService,
+		cnQuotaService:          cnQuotaService,
 		cache:                   cache,
 		identityCache:           identityCache,
 		tlsFPProfileService:     tlsFPProfileService,
@@ -390,6 +393,17 @@ func (s *AccountUsageService) getUsageForAccount(ctx context.Context, account *A
 
 	if account.Platform == PlatformGrok {
 		usage, err := s.getGrokUsage(ctx, account, forceProbe)
+		if err == nil && usage != nil && usage.Error == "" {
+			s.tryClearRecoverableAccountError(ctx, account)
+		}
+		return usage, err
+	}
+
+	// 国产 coding plan（kimi/zhipu）：额度端点是数据面 Key 的只读 GET，
+	// 实时查询走 CNProviderQuotaService 并回写 Extra 快照（与配额监控
+	// fetcher、调度阈值停调共用同一份快照）。
+	if cnCodingPlanQuotaSupported(account) {
+		usage, err := s.getCNQuotaUsage(ctx, account)
 		if err == nil && usage != nil && usage.Error == "" {
 			s.tryClearRecoverableAccountError(ctx, account)
 		}
@@ -1879,9 +1893,118 @@ func BuildStoredAccountUsage(account *Account, now time.Time) *UsageInfo {
 		}
 		alignUsageProgressTo(info.FiveHour, now)
 		alignUsageProgressTo(info.SevenDay, now)
+	case cnCodingPlanQuotaSupported(account):
+		info = buildCNQuotaStoredUsage(account.GetCodingPlanProvider(), account.Extra, now)
 	}
 
 	return info
+}
+
+// cnCodingPlanQuotaSupported 报告账号是否具备 Coding Plan 额度探测条件：
+// kimi/zhipu 的 coding 模式账号（base_url 可识别供应商）。deepseek 无
+// 官方额度端点，payg 模式账号不参与。
+func cnCodingPlanQuotaSupported(account *Account) bool {
+	if account == nil || !account.IsCNProvider() {
+		return false
+	}
+	switch account.GetCodingPlanProvider() {
+	case PlatformKimi, PlatformZhipu:
+		return true
+	default:
+		return false
+	}
+}
+
+// buildCNQuotaStoredUsage 从 CNProviderQuotaService 落盘的
+// {provider}_5h_* / {provider}_weekly_* Extra 快照构建仪表盘窗口视图。
+// 百分比已为 0-100，直接使用；无任何窗口数据时返回空 info（不报错）。
+func buildCNQuotaStoredUsage(provider string, extra map[string]any, now time.Time) *UsageInfo {
+	info := &UsageInfo{Source: "stored"}
+	info.FiveHour = buildCNQuotaProgressAt(extra, cnExtraKey(provider, cnExtraSuffix5hUsed), cnExtraKey(provider, cnExtraSuffix5hReset), now)
+	info.SevenDay = buildCNQuotaProgressAt(extra, cnExtraKey(provider, cnExtraSuffixWeeklyUsed), cnExtraKey(provider, cnExtraSuffixWeeklyReset), now)
+	info.UpdatedAt = parseUsageSnapshotTime(extra, cnExtraKey(provider, cnExtraSuffixUsageUpdated))
+	return info
+}
+
+func buildCNQuotaProgressAt(extra map[string]any, usedKey, resetKey string, now time.Time) *UsageProgress {
+	util := parseExtraFloat64(extra[usedKey])
+	resetAt := parseExtraTime(extra[resetKey])
+	if util <= 0 && resetAt.IsZero() {
+		return nil
+	}
+	return cnQuotaFinalizeProgress(&UsageProgress{Utilization: util}, resetAt, now)
+}
+
+// cnQuotaFinalizeProgress 归一化重置时间与剩余秒数；窗口已过期（resetAt 在
+// now 之前）时利用率归零——与 Codex 分支 buildCodexUsageProgressFromExtra
+// 的既有语义一致，避免探测未及时刷新时长期显示重置前的高用量。
+func cnQuotaFinalizeProgress(progress *UsageProgress, resetAt time.Time, now time.Time) *UsageProgress {
+	if resetAt.IsZero() {
+		return progress
+	}
+	progress.ResetsAt = &resetAt
+	remaining := int(resetAt.Sub(now).Seconds())
+	if remaining < 0 {
+		remaining = 0
+	}
+	progress.RemainingSeconds = remaining
+	if !now.Before(resetAt) {
+		progress.Utilization = 0
+	}
+	return progress
+}
+
+// getCNQuotaUsage 实时查询国产 coding plan 滚动窗口额度。探测失败或本轮未
+// 返回任何窗口 tiers 时返回错误，由调用方回退到 BuildStoredAccountUsage 的
+// 持久化快照；部分 tiers（如老套餐只报 5h）只构成本轮实际返回的窗口，不把
+// 旧快照值伪装成最新数据。
+func (s *AccountUsageService) getCNQuotaUsage(ctx context.Context, account *Account) (*UsageInfo, error) {
+	if s == nil || s.cnQuotaService == nil {
+		return nil, fmt.Errorf("cn quota service is not configured")
+	}
+	result, err := s.cnQuotaService.QueryUsageForAccount(ctx, account)
+	if err != nil {
+		return nil, err
+	}
+	if result == nil || !result.Success {
+		message := "cn quota probe failed"
+		if result != nil && result.Error != "" {
+			message = message + ": " + result.Error
+		}
+		return nil, fmt.Errorf("%s", message)
+	}
+	if len(result.Tiers) == 0 {
+		// 上游 2xx 但解析不出任何窗口：视为失败，避免旧值配新 updated_at。
+		return nil, fmt.Errorf("cn quota probe returned no usage tiers")
+	}
+	fetchedAt := time.Unix(result.FetchedAt, 0).UTC()
+	return buildCNQuotaUsageFromTiers(result.Tiers, fetchedAt, time.Now()), nil
+}
+
+// buildCNQuotaUsageFromTiers 直接从本轮探测 tiers 构建窗口视图（百分比 0-100）。
+func buildCNQuotaUsageFromTiers(tiers []CNQuotaTier, fetchedAt time.Time, now time.Time) *UsageInfo {
+	info := &UsageInfo{Source: "active", UpdatedAt: &fetchedAt}
+	for _, tier := range tiers {
+		progress := cnQuotaTierProgress(tier, now)
+		if progress == nil {
+			continue
+		}
+		switch tier.Window {
+		case "5h":
+			info.FiveHour = progress
+		case "weekly":
+			info.SevenDay = progress
+		}
+	}
+	return info
+}
+
+func cnQuotaTierProgress(tier CNQuotaTier, now time.Time) *UsageProgress {
+	resetAt := parseExtraTime(tier.ResetAt)
+	if tier.UsedPercent <= 0 && resetAt.IsZero() {
+		return nil
+	}
+	return cnQuotaFinalizeProgress(&UsageProgress{Utilization: tier.UsedPercent}, resetAt, now)
 }
 
 func parseUsageSnapshotTime(extra map[string]any, key string) *time.Time {
@@ -1910,6 +2033,11 @@ func SupportsLiveAccountUsageRefresh(account *Account) bool {
 	}
 	if account.IsGrokOAuth() {
 		return true
+	}
+	if account.IsCNProvider() {
+		// kimi/zhipu coding plan：额度端点为只读 GET（singleflight 去重、
+		// 15s 超时），可安全用于仪表盘实时刷新。
+		return cnCodingPlanQuotaSupported(account)
 	}
 	return account.Platform == PlatformAnthropic && account.Type == AccountTypeOAuth
 }

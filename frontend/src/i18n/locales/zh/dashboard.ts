@@ -346,6 +346,8 @@ export default {
     sync7dWindowSourcePassive: '被动采样',
     sync7dWindowSourceWeeklyQuota: '周配额',
     sync7dWindowSourceGrok: 'Grok周窗口',
+    sync7dWindowSourceZhipu: '智谱周窗口',
+    sync7dWindowSourceKimi: 'Kimi周窗口',
     resetRateLimitTitle: '确认重置速率限制',
     resetRateLimitConfirmMessage: '确定要重置密钥 "{name}" 的速率限制用量吗？所有时间窗口的已用额度将归零。此操作不可撤销。',
     rateLimitResetSuccess: '速率限制已重置',

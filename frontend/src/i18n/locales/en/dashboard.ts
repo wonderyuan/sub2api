@@ -341,6 +341,8 @@ export default {
     sync7dWindowSourcePassive: 'Passive sample',
     sync7dWindowSourceWeeklyQuota: 'Weekly quota',
     sync7dWindowSourceGrok: 'Grok weekly window',
+    sync7dWindowSourceZhipu: 'Zhipu weekly window',
+    sync7dWindowSourceKimi: 'Kimi weekly window',
     resetRateLimitTitle: 'Confirm Reset Rate Limit',
     resetRateLimitConfirmMessage: 'Are you sure you want to reset the rate limit usage for key "{name}"? All time window usage will be reset to zero. This action cannot be undone.',
     rateLimitResetSuccess: 'Rate limit usage reset successfully',
