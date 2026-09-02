@@ -187,6 +187,7 @@ func TestBuildStoredAccountUsageZhipuCodingPlan(t *testing.T) {
 			"zhipu_weekly_used_percent": 18.0,
 			"zhipu_weekly_reset_at":     now.Add(4 * 24 * time.Hour).Format(time.RFC3339),
 			"zhipu_usage_updated_at":    updatedAt.Format(time.RFC3339),
+			"zhipu_plan_level":          "GLM-Pro",
 		},
 	}
 
@@ -202,6 +203,10 @@ func TestBuildStoredAccountUsageZhipuCodingPlan(t *testing.T) {
 	require.Equal(t, int((4 * 24 * time.Hour).Seconds()), usage.SevenDay.RemainingSeconds)
 	require.NotNil(t, usage.UpdatedAt)
 	require.True(t, usage.UpdatedAt.Equal(updatedAt))
+	require.NotNil(t, usage.FixedQuotaCapacity)
+	require.Equal(t, "zhipu_glm_pro", usage.FixedQuotaCapacity.Source)
+	require.Equal(t, 120.0, usage.FixedQuotaCapacity.FiveHourUSD)
+	require.Equal(t, 600.0, usage.FixedQuotaCapacity.SevenDayUSD)
 }
 
 func TestBuildStoredAccountUsageZhipuCodingPlanDoesNotInventMissingWindows(t *testing.T) {
@@ -436,8 +441,9 @@ func TestGetCNQuotaUsageLiveRefreshResponses(t *testing.T) {
 	t.Run("full tiers build both windows", func(t *testing.T) {
 		t.Parallel()
 		upstream := &stubCNQuotaUpstream{status: http.StatusOK, body: zhipuQuotaBody("3", "6")}
+		repo := &stubCNQuotaAccountRepo{}
 		svc := &AccountUsageService{cnQuotaService: NewCNProviderQuotaService(
-			&stubCNQuotaAccountRepo{}, nil, upstream, nil,
+			repo, nil, upstream, nil,
 		)}
 
 		usage, err := svc.getCNQuotaUsage(context.Background(), zhipuCodingQuotaAccount())
@@ -447,5 +453,8 @@ func TestGetCNQuotaUsageLiveRefreshResponses(t *testing.T) {
 		require.NotNil(t, usage.SevenDay)
 		require.Greater(t, usage.FiveHour.RemainingSeconds, 0)
 		require.Greater(t, usage.SevenDay.RemainingSeconds, 0)
+		require.NotNil(t, usage.FixedQuotaCapacity)
+		require.Equal(t, 600.0, usage.FixedQuotaCapacity.SevenDayUSD)
+		require.Equal(t, "GLM-Pro", repo.extraUpdates["zhipu_plan_level"])
 	})
 }

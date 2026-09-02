@@ -186,18 +186,19 @@ type AICredit struct {
 
 // UsageInfo 账号使用量信息
 type UsageInfo struct {
-	Source             string         `json:"source,omitempty"`               // "passive", "active", or "stored"
-	UpdatedAt          *time.Time     `json:"updated_at,omitempty"`           // 更新时间
-	FiveHour           *UsageProgress `json:"five_hour"`                      // 5小时窗口
-	SevenDay           *UsageProgress `json:"seven_day,omitempty"`            // 7天窗口
-	SevenDaySonnet     *UsageProgress `json:"seven_day_sonnet,omitempty"`     // 7天Sonnet窗口
-	SevenDayFable      *UsageProgress `json:"seven_day_fable,omitempty"`      // 7天Fable窗口（响应头 7d_oi）
-	GeminiSharedDaily  *UsageProgress `json:"gemini_shared_daily,omitempty"`  // Gemini shared pool RPD (Google One / Code Assist)
-	GeminiProDaily     *UsageProgress `json:"gemini_pro_daily,omitempty"`     // Gemini Pro 日配额
-	GeminiFlashDaily   *UsageProgress `json:"gemini_flash_daily,omitempty"`   // Gemini Flash 日配额
-	GeminiSharedMinute *UsageProgress `json:"gemini_shared_minute,omitempty"` // Gemini shared pool RPM (Google One / Code Assist)
-	GeminiProMinute    *UsageProgress `json:"gemini_pro_minute,omitempty"`    // Gemini Pro RPM
-	GeminiFlashMinute  *UsageProgress `json:"gemini_flash_minute,omitempty"`  // Gemini Flash RPM
+	Source             string              `json:"source,omitempty"`               // "passive", "active", or "stored"
+	UpdatedAt          *time.Time          `json:"updated_at,omitempty"`           // 更新时间
+	FiveHour           *UsageProgress      `json:"five_hour"`                      // 5小时窗口
+	SevenDay           *UsageProgress      `json:"seven_day,omitempty"`            // 7天窗口
+	FixedQuotaCapacity *FixedQuotaCapacity `json:"-"`                              // 已知套餐的内部美元容量锚点
+	SevenDaySonnet     *UsageProgress      `json:"seven_day_sonnet,omitempty"`     // 7天Sonnet窗口
+	SevenDayFable      *UsageProgress      `json:"seven_day_fable,omitempty"`      // 7天Fable窗口（响应头 7d_oi）
+	GeminiSharedDaily  *UsageProgress      `json:"gemini_shared_daily,omitempty"`  // Gemini shared pool RPD (Google One / Code Assist)
+	GeminiProDaily     *UsageProgress      `json:"gemini_pro_daily,omitempty"`     // Gemini Pro 日配额
+	GeminiFlashDaily   *UsageProgress      `json:"gemini_flash_daily,omitempty"`   // Gemini Flash 日配额
+	GeminiSharedMinute *UsageProgress      `json:"gemini_shared_minute,omitempty"` // Gemini shared pool RPM (Google One / Code Assist)
+	GeminiProMinute    *UsageProgress      `json:"gemini_pro_minute,omitempty"`    // Gemini Pro RPM
+	GeminiFlashMinute  *UsageProgress      `json:"gemini_flash_minute,omitempty"`  // Gemini Flash RPM
 
 	// Antigravity 多模型配额
 	AntigravityQuota map[string]*AntigravityModelQuota `json:"antigravity_quota,omitempty"`
@@ -250,6 +251,19 @@ type UsageInfo struct {
 	// 获取 usage 时的错误信息（降级返回，而非 500）
 	Error string `json:"error,omitempty"`
 }
+
+// FixedQuotaCapacity 是已知套餐映射到内部美元账本后的固定窗口容量。
+type FixedQuotaCapacity struct {
+	FiveHourUSD float64
+	SevenDayUSD float64
+	Source      string
+}
+
+const (
+	// 内部美元账本按 1 智谱积分 = $0.01 映射：PRO 为 12,000/60,000 积分。
+	zhipuGLMProFiveHourCapacityUSD = 120.0
+	zhipuGLMProSevenDayCapacityUSD = 600.0
+)
 
 // ClaudeUsageWindow Anthropic /api/oauth/usage 返回的单个用量窗口
 type ClaudeUsageWindow struct {
@@ -1923,7 +1937,20 @@ func buildCNQuotaStoredUsage(provider string, extra map[string]any, now time.Tim
 	info.FiveHour = buildCNQuotaProgressAt(extra, cnExtraKey(provider, cnExtraSuffix5hUsed), cnExtraKey(provider, cnExtraSuffix5hReset), now)
 	info.SevenDay = buildCNQuotaProgressAt(extra, cnExtraKey(provider, cnExtraSuffixWeeklyUsed), cnExtraKey(provider, cnExtraSuffixWeeklyReset), now)
 	info.UpdatedAt = parseUsageSnapshotTime(extra, cnExtraKey(provider, cnExtraSuffixUsageUpdated))
+	planLevel, _ := extra[zhipuPlanLevelExtraKey].(string)
+	info.FixedQuotaCapacity = cnFixedQuotaCapacity(provider, planLevel)
 	return info
+}
+
+func cnFixedQuotaCapacity(provider, planLevel string) *FixedQuotaCapacity {
+	if provider != PlatformZhipu || !strings.EqualFold(strings.TrimSpace(planLevel), "GLM-Pro") {
+		return nil
+	}
+	return &FixedQuotaCapacity{
+		FiveHourUSD: zhipuGLMProFiveHourCapacityUSD,
+		SevenDayUSD: zhipuGLMProSevenDayCapacityUSD,
+		Source:      "zhipu_glm_pro",
+	}
 }
 
 func buildCNQuotaProgressAt(extra map[string]any, usedKey, resetKey string, now time.Time) *UsageProgress {
@@ -1978,12 +2005,16 @@ func (s *AccountUsageService) getCNQuotaUsage(ctx context.Context, account *Acco
 		return nil, fmt.Errorf("cn quota probe returned no usage tiers")
 	}
 	fetchedAt := time.Unix(result.FetchedAt, 0).UTC()
-	return buildCNQuotaUsageFromTiers(result.Tiers, fetchedAt, time.Now()), nil
+	return buildCNQuotaUsageFromTiers(result.Provider, result.PlanLevel, result.Tiers, fetchedAt, time.Now()), nil
 }
 
 // buildCNQuotaUsageFromTiers 直接从本轮探测 tiers 构建窗口视图（百分比 0-100）。
-func buildCNQuotaUsageFromTiers(tiers []CNQuotaTier, fetchedAt time.Time, now time.Time) *UsageInfo {
-	info := &UsageInfo{Source: "active", UpdatedAt: &fetchedAt}
+func buildCNQuotaUsageFromTiers(provider, planLevel string, tiers []CNQuotaTier, fetchedAt time.Time, now time.Time) *UsageInfo {
+	info := &UsageInfo{
+		Source:             "active",
+		UpdatedAt:          &fetchedAt,
+		FixedQuotaCapacity: cnFixedQuotaCapacity(provider, planLevel),
+	}
 	for _, tier := range tiers {
 		progress := cnQuotaTierProgress(tier, now)
 		if progress == nil {
