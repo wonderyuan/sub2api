@@ -187,7 +187,7 @@ func TestBuildStoredAccountUsageZhipuCodingPlan(t *testing.T) {
 			"zhipu_weekly_used_percent": 18.0,
 			"zhipu_weekly_reset_at":     now.Add(4 * 24 * time.Hour).Format(time.RFC3339),
 			"zhipu_usage_updated_at":    updatedAt.Format(time.RFC3339),
-			"zhipu_plan_level":          "GLM-Pro",
+			"zhipu_plan_level":          "pro",
 		},
 	}
 
@@ -207,6 +207,19 @@ func TestBuildStoredAccountUsageZhipuCodingPlan(t *testing.T) {
 	require.Equal(t, "zhipu_glm_pro", usage.FixedQuotaCapacity.Source)
 	require.Equal(t, 120.0, usage.FixedQuotaCapacity.FiveHourUSD)
 	require.Equal(t, 600.0, usage.FixedQuotaCapacity.SevenDayUSD)
+}
+
+func TestCNFixedQuotaCapacityRecognizesGLMProAliases(t *testing.T) {
+	t.Parallel()
+
+	for _, planLevel := range []string{"pro", "GLM-Pro", " PRO "} {
+		capacity := cnFixedQuotaCapacity(PlatformZhipu, planLevel)
+		require.NotNil(t, capacity, planLevel)
+		require.Equal(t, 120.0, capacity.FiveHourUSD)
+		require.Equal(t, 600.0, capacity.SevenDayUSD)
+	}
+	require.Nil(t, cnFixedQuotaCapacity(PlatformZhipu, "max"))
+	require.Nil(t, cnFixedQuotaCapacity(PlatformKimi, "pro"))
 }
 
 func TestBuildStoredAccountUsageZhipuCodingPlanDoesNotInventMissingWindows(t *testing.T) {
@@ -400,7 +413,7 @@ func zhipuQuotaBody(tiers ...string) string {
 			tier, tier, time.Now().Add(time.Duration(i+1)*time.Hour).UnixMilli(),
 		))
 	}
-	return fmt.Sprintf(`{"success":true,"data":{"level":"GLM-Pro","limits":[%s]}}`, strings.Join(limitItems, ","))
+	return fmt.Sprintf(`{"success":true,"data":{"level":"pro","limits":[%s]}}`, strings.Join(limitItems, ","))
 }
 
 func TestGetCNQuotaUsageLiveRefreshResponses(t *testing.T) {
@@ -455,6 +468,6 @@ func TestGetCNQuotaUsageLiveRefreshResponses(t *testing.T) {
 		require.Greater(t, usage.SevenDay.RemainingSeconds, 0)
 		require.NotNil(t, usage.FixedQuotaCapacity)
 		require.Equal(t, 600.0, usage.FixedQuotaCapacity.SevenDayUSD)
-		require.Equal(t, "GLM-Pro", repo.extraUpdates["zhipu_plan_level"])
+		require.Equal(t, "pro", repo.extraUpdates["zhipu_plan_level"])
 	})
 }

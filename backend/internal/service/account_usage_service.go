@@ -1943,7 +1943,12 @@ func buildCNQuotaStoredUsage(provider string, extra map[string]any, now time.Tim
 }
 
 func cnFixedQuotaCapacity(provider, planLevel string) *FixedQuotaCapacity {
-	if provider != PlatformZhipu || !strings.EqualFold(strings.TrimSpace(planLevel), "GLM-Pro") {
+	if provider != PlatformZhipu {
+		return nil
+	}
+	switch strings.ToLower(strings.TrimSpace(planLevel)) {
+	case "pro", "glm-pro":
+	default:
 		return nil
 	}
 	return &FixedQuotaCapacity{
