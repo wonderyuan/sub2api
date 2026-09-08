@@ -175,6 +175,7 @@ export default {
     saving: '保存中...',
     noKeysYet: '暂无 API 密钥',
     createFirstKey: '创建您的第一个 API 密钥以开始使用 API。',
+    readOnlyEmptyDescription: 'API 密钥由管理员统一管理，您的账号仅有只读权限。',
     keyCreatedSuccess: 'API 密钥创建成功',
     keyUpdatedSuccess: 'API 密钥更新成功',
     keyDeletedSuccess: 'API 密钥删除成功',

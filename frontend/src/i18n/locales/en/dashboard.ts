@@ -175,6 +175,7 @@ export default {
     saving: 'Saving...',
     noKeysYet: 'No API keys yet',
     createFirstKey: 'Create your first API key to get started with the API.',
+    readOnlyEmptyDescription: 'API keys are managed by administrators and are read-only for your account.',
     keyCreatedSuccess: 'API key created successfully',
     keyUpdatedSuccess: 'API key updated successfully',
     keyDeletedSuccess: 'API key deleted successfully',
