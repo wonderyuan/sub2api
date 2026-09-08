@@ -109,7 +109,9 @@ func TestResponsesWebSocketHasFirstAndSubsequentTurnPromptGates(t *testing.T) {
 func TestGrokRealtimeWebSocketIsCoveredByPromptAudit(t *testing.T) {
 	routeSource, err := os.ReadFile("gateway.go")
 	require.NoError(t, err)
-	require.GreaterOrEqual(t, strings.Count(string(routeSource), `.GET("/realtime"`), 2)
+	// v1 分组与根别名两条入口都必须存在；根别名经上游 rootRoute 辅助函数注册。
+	require.GreaterOrEqual(t, strings.Count(string(routeSource), `gateway.GET("/realtime"`), 1)
+	require.GreaterOrEqual(t, strings.Count(string(routeSource), `rootRoute(http.MethodGet, "/realtime"`), 1)
 
 	handlerSource, err := os.ReadFile(filepath.Join("..", "..", "handler", "grok_audio.go"))
 	require.NoError(t, err)
