@@ -196,6 +196,7 @@ const DataTableStub = {
           <slot name="cell-id" :value="row.id" :row="row" />
         </div>
         <slot name="cell-name" :value="row.name" :row="row" />
+        <slot name="cell-actions" :row="row" />
         <div data-test="current-concurrency">
           <slot name="cell-current_concurrency" :value="row.current_concurrency" :row="row" />
         </div>
@@ -241,7 +242,7 @@ const PaginationStub = {
 
 const BaseDialogStub = {
   props: ['show'],
-  template: '<div v-if="show"><slot /></div>',
+  template: '<div v-if="show"><slot /><slot name="footer" /></div>',
 }
 
 const IconStub = {
@@ -295,6 +296,7 @@ describe('user KeysView column settings', () => {
     localStorage.clear()
 
     listKeys.mockReset()
+    updateKey.mockReset()
     getPublicSettings.mockReset()
     getDashboardApiKeysUsage.mockReset()
     getAvailableGroups.mockReset()
@@ -327,6 +329,43 @@ describe('user KeysView column settings', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+  })
+
+  it.each([
+    { initialStatus: 'quota_exhausted', status: 'active', formStatus: 'active' },
+    { initialStatus: 'inactive', status: 'inactive', formStatus: 'inactive' },
+    { initialStatus: 'active', status: 'active', formStatus: 'inactive' },
+  ] as const)('syncs quota reset from $initialStatus to $status with form status $formStatus', async ({ initialStatus, status, formStatus }) => {
+    const key: ApiKey = {
+      ...createApiKey(), group_id: 1, quota: 10, quota_used: 10,
+      status: initialStatus,
+    }
+    listKeys.mockResolvedValueOnce({ items: [key], total: 1, page: 1, page_size: 20, pages: 1 })
+    updateKey.mockResolvedValue({ ...key, status, quota_used: 0 })
+    const wrapper = await mountView()
+    await getButtonByText(wrapper, 'common.edit').trigger('click')
+    await wrapper.get('[data-tour="key-form-name"]').setValue('Unsaved name')
+    const statusSelect = wrapper.findAllComponents({ name: 'Select' })
+      .find((select) => select.props('options').length === 2 &&
+        select.props('options')[0].value === 'active')!
+    statusSelect.vm.$emit('update:modelValue', 'inactive')
+    await wrapper.get('button[title="keys.resetQuotaUsed"]').trigger('click')
+    const confirmation = wrapper.findAllComponents({ name: 'ConfirmDialog' })
+      .find((dialog) => dialog.props('title') === 'keys.resetQuotaTitle')!
+    confirmation.vm.$emit('confirm')
+    await flushPromises()
+
+    expect(updateKey).toHaveBeenNthCalledWith(1, key.id, { reset_quota: true })
+    expect(wrapper.findComponent({ name: 'DataTable' }).props('data')[0])
+      .toMatchObject({ status, quota_used: 0 })
+    expect(statusSelect.props('modelValue')).toBe(formStatus)
+    expect((wrapper.get('[data-tour="key-form-name"]').element as HTMLInputElement).value)
+      .toBe('Unsaved name')
+
+    await wrapper.get('#key-form').trigger('submit')
+    await flushPromises()
+    expect(updateKey).toHaveBeenNthCalledWith(2, key.id, expect.objectContaining({ name: 'Unsaved name', status: formStatus }))
+    wrapper.unmount()
   })
 
   it('uses the default API key columns with low-frequency columns hidden', async () => {
