@@ -226,6 +226,10 @@ func (h *ConcurrencyHelper) DecrementAccountWaitCount(ctx context.Context, accou
 // TryAcquireUserSlot 尝试立即获取用户并发槽位。
 // 返回值: (releaseFunc, acquired, error)
 func (h *ConcurrencyHelper) TryAcquireUserSlot(ctx context.Context, userID int64, maxConcurrency int) (func(), bool, error) {
+	// 与 checkSecurityAudit 的 nil 保护一致：单元测试可缺省并发装配，直接放行。
+	if h == nil || h.concurrencyService == nil {
+		return func() {}, true, nil
+	}
 	result, err := h.concurrencyService.AcquireUserSlot(ctx, userID, maxConcurrency)
 	if err != nil {
 		return nil, false, err
