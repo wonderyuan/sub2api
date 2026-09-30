@@ -789,8 +789,8 @@ func TestApiKeyService_DeleteAsAdmin_BypassesOwnership(t *testing.T) {
 	err := svc.DeleteAsAdmin(context.Background(), 50, 999)
 	require.NoError(t, err)
 	require.Equal(t, []int64{50}, repo.deletedIDs)
-	// 缓存应按 ownerID（10）清理，而非调用者
-	require.Equal(t, []int64{10}, cache.invalidated)
+	// 认证缓存按被删 key 清理；创建计数不清零（上游语义：防"删除后反复新建"绕过创建限流）。
+	require.NotEmpty(t, cache.deleteAuthKeys)
 }
 
 // TestApiKeyService_Delete_NonAdmin_BlockedOnForeignKey 验证：普通用户删除他人 Key 仍被拒绝。
@@ -804,7 +804,7 @@ func TestApiKeyService_Delete_NonAdmin_BlockedOnForeignKey(t *testing.T) {
 	err := svc.Delete(context.Background(), 50, 999) // 普通用户 999 ≠ owner 10
 	require.ErrorIs(t, err, ErrInsufficientPerms)
 	require.Empty(t, repo.deletedIDs)
-	require.Empty(t, cache.invalidated)
+	require.Empty(t, cache.deleteAuthKeys)
 }
 
 // TestApiKeyService_UpdateAsAdmin_BypassesOwnership 验证：管理员可编辑他人 Key（跳过所有权校验）。
