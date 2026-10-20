@@ -38,7 +38,7 @@ func TestPromptAuditGatePrecedesAccountBillingAndUpstreamSideEffects(t *testing.
 		{file: "gateway_web_search.go", function: "WebSearch", auditToken: "checkSecurityAudit"},
 	}
 	sideEffectTokens := []string{
-		"CheckBillingEligibility(", "SelectAccount", ".Forward", "acquireResponsesUserSlot(",
+		"CheckBillingEligibility(", "reserveInflightBalance(", "SelectAccount", ".Forward", "acquireResponsesUserSlot(",
 		"AcquireUserSlot", "TryAcquireUserSlot", "acquireImageGenerationSlot(",
 		"h.tasks.Create(", "h.service.Submit(",
 	}
