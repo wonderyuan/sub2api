@@ -15,17 +15,20 @@ import (
 )
 
 const (
-	codexRadarInsightsURL           = "https://codexradar.com/api/radar-insights"
-	codexRadarSoftwareMetricsURL    = "https://codexradar.com/api/intelligence-efficiency-metrics"
-	codexRadarVisualSpatialURL      = "https://codexradar.com/api/visual-spatial-reasoning"
-	codexRadarRequestTimeout        = 12 * time.Second
+	codexRadarInsightsURL        = "https://codexradar.com/api/radar-insights"
+	codexRadarSoftwareMetricsURL = "https://codexradar.com/api/intelligence-efficiency-metrics"
+	codexRadarVisualSpatialURL   = "https://codexradar.com/api/visual-spatial-reasoning"
+	codexRadarRequestTimeout     = 12 * time.Second
+	// CodexRadar 的 visual-spatial 响应自 2026-10 起超过 2MB 且传输缓慢，
+	// 短超时会把整个视觉榜连同综合榜的均价/时长数据一起打断。
+	codexRadarVisualSpatialTimeout  = 45 * time.Second
 	codexRadarResponseHeaderTTL     = 8 * time.Second
 	codexRadarSoftwareMetricsSchema = 3
 	codexRadarVisualSpatialSchema   = 1
 
 	codexRadarInsightsBodyLimit        int64 = 512 << 10
 	codexRadarSoftwareMetricsBodyLimit int64 = 256 << 10
-	codexRadarVisualSpatialBodyLimit   int64 = 1 << 20
+	codexRadarVisualSpatialBodyLimit   int64 = 6 << 20
 
 	codexRadarMaxStationItems = 2
 )
@@ -84,7 +87,7 @@ type CodexRadarService struct {
 // fixed CodexRadar endpoints. It never inherits an environment proxy.
 func NewCodexRadarService() (*CodexRadarService, error) {
 	client, err := httpclient.GetClient(httpclient.Options{
-		Timeout:               codexRadarRequestTimeout,
+		Timeout:               codexRadarVisualSpatialTimeout,
 		ResponseHeaderTimeout: codexRadarResponseHeaderTTL,
 		ValidateResolvedIP:    true,
 		MaxConnsPerHost:       4,
@@ -98,7 +101,7 @@ func NewCodexRadarService() (*CodexRadarService, error) {
 
 func newCodexRadarService(client *http.Client, insightsURL, softwareMetricsURL, visualSpatialURL string) *CodexRadarService {
 	if client == nil {
-		client = &http.Client{Timeout: codexRadarRequestTimeout}
+		client = &http.Client{Timeout: codexRadarVisualSpatialTimeout}
 	}
 
 	clientCopy := *client
@@ -143,11 +146,11 @@ func (s *CodexRadarService) GetDashboardRecommendations(ctx context.Context) (*C
 		insightsCh <- insightsResult{groups: groups, comprehensivePoints: points, updatedAt: updatedAt, err: err}
 	}()
 	go func() {
-		metrics, updatedAt, err := s.fetchMetricPoints(ctx, s.softwareMetricsURL, codexRadarSoftwareMetricsBodyLimit, codexRadarSoftwareMetricsSchema)
+		metrics, updatedAt, err := s.fetchMetricPoints(ctx, s.softwareMetricsURL, codexRadarSoftwareMetricsBodyLimit, codexRadarSoftwareMetricsSchema, codexRadarRequestTimeout)
 		softwareCh <- metricsResult{metrics: metrics, updatedAt: updatedAt, err: err}
 	}()
 	go func() {
-		metrics, updatedAt, err := s.fetchMetricPoints(ctx, s.visualSpatialURL, codexRadarVisualSpatialBodyLimit, codexRadarVisualSpatialSchema)
+		metrics, updatedAt, err := s.fetchMetricPoints(ctx, s.visualSpatialURL, codexRadarVisualSpatialBodyLimit, codexRadarVisualSpatialSchema, codexRadarVisualSpatialTimeout)
 		visualCh <- metricsResult{metrics: metrics, updatedAt: updatedAt, err: err}
 	}()
 
@@ -180,7 +183,7 @@ func (s *CodexRadarService) GetDashboardRecommendations(ctx context.Context) (*C
 
 func (s *CodexRadarService) fetchInsights(ctx context.Context) ([]CodexRadarStationRecommendationSet, []codexRadarComprehensivePointPayload, time.Time, error) {
 	var payload codexRadarInsightsPayload
-	if err := s.fetchJSON(ctx, s.insightsURL, codexRadarInsightsBodyLimit, &payload); err != nil {
+	if err := s.fetchJSON(ctx, s.insightsURL, codexRadarInsightsBodyLimit, codexRadarRequestTimeout, &payload); err != nil {
 		return nil, nil, time.Time{}, err
 	}
 	if payload.Schema != 1 {
@@ -234,9 +237,9 @@ func (s *CodexRadarService) fetchInsights(ctx context.Context) ([]CodexRadarStat
 	return sets, payload.ComprehensivePoints, parseCodexRadarTime(payload.SourceUpdatedAt), nil
 }
 
-func (s *CodexRadarService) fetchMetricPoints(ctx context.Context, endpoint string, bodyLimit int64, schema int) ([]CodexRadarIntelligenceMetric, time.Time, error) {
+func (s *CodexRadarService) fetchMetricPoints(ctx context.Context, endpoint string, bodyLimit int64, schema int, timeout time.Duration) ([]CodexRadarIntelligenceMetric, time.Time, error) {
 	var payload codexRadarMetricsPayload
-	if err := s.fetchJSON(ctx, endpoint, bodyLimit, &payload); err != nil {
+	if err := s.fetchJSON(ctx, endpoint, bodyLimit, timeout, &payload); err != nil {
 		return nil, time.Time{}, err
 	}
 	if payload.Schema != schema || len(payload.Points) == 0 {
@@ -264,8 +267,8 @@ func (s *CodexRadarService) fetchMetricPoints(ctx context.Context, endpoint stri
 	return metrics, parseCodexRadarTime(payload.SourceUpdatedAt), nil
 }
 
-func (s *CodexRadarService) fetchJSON(ctx context.Context, endpoint string, bodyLimit int64, target any) error {
-	requestCtx, cancel := context.WithTimeout(ctx, codexRadarRequestTimeout)
+func (s *CodexRadarService) fetchJSON(ctx context.Context, endpoint string, bodyLimit int64, timeout time.Duration, target any) error {
+	requestCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, endpoint, nil)

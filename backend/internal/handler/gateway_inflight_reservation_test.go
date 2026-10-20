@@ -195,6 +195,8 @@ func TestWebSearch_RejectsWhenInflightExceedsBalance(t *testing.T) {
 	c.Request = httptest.NewRequest(http.MethodPost, "/web_search", bytes.NewBufferString(`{"query":"sub2api"}`))
 	c.Request.Header.Set("Content-Type", "application/json")
 	c.Set(string(middleware2.ContextKeyAPIKey), apiKey)
+	// fork 语义：WebSearch 在预留之前要求已认证 subject。
+	c.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: 42})
 
 	h.WebSearch(c)
 

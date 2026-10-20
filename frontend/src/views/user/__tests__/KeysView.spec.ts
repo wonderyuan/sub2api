@@ -696,8 +696,8 @@ describe('user KeysView column settings', () => {
 
     it('clears the previous group on provider change and submits only the newly selected group', async () => {
       const wrapper = await openCreate()
-      // fork 定制：管理员创建必须先选归属用户，否则提交被 keys.userRequired 拦截。
-      await wrapper.get('#key-form').findComponent({ name: 'Select' }).vm.$emit('update:modelValue', 42)
+      const ownerSelect = wrapper.get('#key-form').findAllComponents({ name: 'Select' })[0]
+      ownerSelect.vm.$emit('update:modelValue', 1)
       await wrapper.get('[data-tour="key-form-name"]').setValue('My key')
       await groupSelect(wrapper).vm.$emit('update:modelValue', 1)
       await chooseProvider(wrapper, 'domestic')
@@ -711,8 +711,7 @@ describe('user KeysView column settings', () => {
       await wrapper.get('#key-form').trigger('submit')
       await flushPromises()
       expect(keysAPI.create).toHaveBeenCalledOnce()
-      // fork 契约：create(name, userId, groupId, ...)，归属用户在前。
-      expect(vi.mocked(keysAPI.create).mock.calls[0].slice(0, 3)).toEqual(['My key', 42, 5])
+      expect(vi.mocked(keysAPI.create).mock.calls[0].slice(0, 3)).toEqual(['My key', 1, 5])
     })
 
     it('defaults to a provider with available groups and disables empty categories', async () => {

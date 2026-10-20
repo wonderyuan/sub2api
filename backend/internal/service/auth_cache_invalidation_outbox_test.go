@@ -65,9 +65,6 @@ func (*authInvalidationCacheStub) GetCreateAttemptCount(context.Context, int64) 
 	return 0, nil
 }
 
-func (*authInvalidationCacheStub) DeleteCreateAttemptCount(context.Context, int64) error {
-	return nil
-}
 
 func (*authInvalidationCacheStub) IncrementCreateAttemptCount(context.Context, int64) error {
 	return nil

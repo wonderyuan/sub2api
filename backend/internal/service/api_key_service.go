@@ -191,7 +191,6 @@ type APIKeyQuotaUsageState struct {
 type APIKeyCache interface {
 	GetCreateAttemptCount(ctx context.Context, userID int64) (int, error)
 	IncrementCreateAttemptCount(ctx context.Context, userID int64) error
-	DeleteCreateAttemptCount(ctx context.Context, userID int64) error
 	IncrementCreateCount(ctx context.Context, userID int64, window time.Duration) (int64, error)
 
 	IncrementDailyUsage(ctx context.Context, apiKey string) error
@@ -1128,11 +1127,7 @@ func (s *APIKeyService) deleteAPIKey(ctx context.Context, id int64, userID int64
 	}
 
 	// 删除成功后再清理缓存,避免"缓存已清但删除失败"的竞态。
-	// 注意:不清零创建次数计数(create_count),否则"删除后反复新建"即可绕过创建限流;
-	// 这里仅重置自定义 Key 的错误尝试计数(ratelimit),属于 fork 保留行为。
-	if s.cache != nil {
-		_ = s.cache.DeleteCreateAttemptCount(ctx, ownerID)
-	}
+	// 注意:不清零创建相关计数,否则"删除后反复新建"即可绕过创建限流。
 	s.InvalidateAuthCacheByKey(ctx, key)
 	s.lastUsedTouchL1.Delete(id)
 

@@ -1712,9 +1712,6 @@ func (stubApiKeyCache) GetCreateAttemptCount(ctx context.Context, userID int64) 
 	return 0, nil
 }
 
-func (stubApiKeyCache) DeleteCreateAttemptCount(ctx context.Context, userID int64) error {
-	return nil
-}
 
 
 func (stubApiKeyCache) IncrementCreateAttemptCount(ctx context.Context, userID int64) error {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -165,4 +166,39 @@ func TestCodexRadarServiceDoesNotFollowRedirects(t *testing.T) {
 	require.True(t, result.SoftwareEngineeringAvailable)
 	require.True(t, result.VisualSpatialAvailable)
 	require.False(t, redirected.Load())
+}
+
+// CodexRadar 的 visual-spatial 响应自 2026-10 起超过 2MB：超旧 1MB 上限会把
+// 视觉榜连同综合榜的均价/时长一起打断。回归：大响应必须被完整接受。
+func TestCodexRadarServiceAcceptsLargeVisualSpatialResponse(t *testing.T) {
+	const oversizedPadding = " "
+
+	visual := codexRadarVisualSpatialFixture
+	visual = strings.Replace(visual,
+		`"schema": 1,`,
+		`"schema": 1, "padding": "`+strings.Repeat(oversizedPadding, 3<<20)+`",`,
+		1)
+	require.Greater(t, len(visual), int(1<<20))
+	require.LessOrEqual(t, len(visual), int(codexRadarVisualSpatialBodyLimit))
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/insights":
+			_, _ = w.Write([]byte(codexRadarStationFixture))
+		case "/software":
+			_, _ = w.Write([]byte(codexRadarSoftwareMetricsFixture))
+		case "/visual":
+			_, _ = w.Write([]byte(visual))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	service := newCodexRadarService(server.Client(), server.URL+"/insights", server.URL+"/software", server.URL+"/visual")
+	result, err := service.GetDashboardRecommendations(context.Background())
+	require.NoError(t, err)
+	require.True(t, result.VisualSpatialAvailable)
+	require.Len(t, result.VisualSpatialRecommendations, 2)
+	require.True(t, result.IntelligenceAvailable)
 }
