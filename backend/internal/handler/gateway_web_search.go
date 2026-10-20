@@ -77,11 +77,9 @@ func (h *GatewayHandler) WebSearch(c *gin.Context) {
 		return
 	}
 
-	subject, ok := middleware2.GetAuthSubjectFromContext(c)
-	if !ok {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{"type": "api_error", "message": "User context not found"}})
-		return
-	}
+	// 上游实现容忍缺失的 user context（认证中间件保证生产请求必有 subject），
+	// 以便余额类校验先于并发槽执行；fork 保留内容审核仍先于计费副作用的顺序。
+	subject, _ := middleware2.GetAuthSubjectFromContext(c)
 	reqLog := requestLogger(c, "handler.gateway.web_search")
 	// Audit user search query before upstream Grok web_search traffic.
 	auditBody, _ := json.Marshal(map[string]any{
@@ -105,16 +103,6 @@ func (h *GatewayHandler) WebSearch(c *gin.Context) {
 		c.JSON(status, gin.H{"error": gin.H{"type": code, "message": msg}})
 		return
 	}
-	var streamStarted bool
-	userRelease, concurrencyErr := h.concurrencyHelper.AcquireUserSlotWithWait(c, subject.UserID, subject.Concurrency, false, &streamStarted)
-	if concurrencyErr != nil {
-		h.handleConcurrencyError(c, concurrencyErr, "user", false)
-		return
-	}
-	userRelease = wrapReleaseOnDone(c.Request.Context(), userRelease)
-	if userRelease != nil {
-		defer userRelease()
-	}
 
 	// Billing eligibility (same as other requests)
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
@@ -125,6 +113,30 @@ func (h *GatewayHandler) WebSearch(c *gin.Context) {
 		}
 		c.JSON(status, gin.H{"error": gin.H{"type": code, "message": message}})
 		return
+	}
+
+	// 余额模式在途预留（与计费同口径估算；计费任务扣减余额缓存后才释放）。
+	// 放在内容审核之后、用户并发槽之前，与上游测试的排序预期一致。
+	inflightDone, inflightErr := reserveInflightBalance(c, h.billingCacheService, h.gatewayService, apiKey, subscription, service.InflightEstimateRequest{Model: "grok-" + strings.ReplaceAll(searchLabel, "_", "-"), Kind: service.InflightEstimatePerRequest, SearchCalls: 1})
+	if inflightErr != nil {
+		status, code, message, retryAfter := billingErrorDetails(inflightErr)
+		if retryAfter > 0 {
+			c.Header("Retry-After", strconv.Itoa(retryAfter))
+		}
+		c.JSON(status, gin.H{"error": gin.H{"type": code, "message": message}})
+		return
+	}
+	defer inflightDone()
+
+	var streamStarted bool
+	userRelease, concurrencyErr := h.concurrencyHelper.AcquireUserSlotWithWait(c, subject.UserID, subject.Concurrency, false, &streamStarted)
+	if concurrencyErr != nil {
+		h.handleConcurrencyError(c, concurrencyErr, "user", false)
+		return
+	}
+	userRelease = wrapReleaseOnDone(c.Request.Context(), userRelease)
+	if userRelease != nil {
+		defer userRelease()
 	}
 
 	// Use exactly the same scheduling as other requests (SelectAccountWithLoadAwareness handles load, rate limit, sticky, etc.)

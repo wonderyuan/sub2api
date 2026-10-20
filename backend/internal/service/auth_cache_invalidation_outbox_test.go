@@ -64,11 +64,18 @@ type authInvalidationCacheStub struct {
 func (*authInvalidationCacheStub) GetCreateAttemptCount(context.Context, int64) (int, error) {
 	return 0, nil
 }
+
+func (*authInvalidationCacheStub) DeleteCreateAttemptCount(context.Context, int64) error {
+	return nil
+}
+
 func (*authInvalidationCacheStub) IncrementCreateAttemptCount(context.Context, int64) error {
 	return nil
 }
-func (*authInvalidationCacheStub) DeleteCreateAttemptCount(context.Context, int64) error { return nil }
-func (*authInvalidationCacheStub) IncrementDailyUsage(context.Context, string) error     { return nil }
+func (*authInvalidationCacheStub) IncrementCreateCount(context.Context, int64, time.Duration) (int64, error) {
+	return 0, nil
+}
+func (*authInvalidationCacheStub) IncrementDailyUsage(context.Context, string) error { return nil }
 func (*authInvalidationCacheStub) SetDailyUsageExpiry(context.Context, string, time.Duration) error {
 	return nil
 }
