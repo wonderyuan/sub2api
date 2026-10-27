@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import {
   BUILTIN_PLATFORM_CATALOG,
   resetPlatformCatalog,
@@ -1933,6 +1933,167 @@ describe('EditAccountModal', () => {
     expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).not.toHaveProperty(
       'antigravity_project_id'
     )
+  })
+})
+
+describe('EditAccountModal upstream-reset API key settings', () => {
+  const toggleSelector = '[data-testid="auto-reset-api-keys-on-upstream-reset"]'
+
+  beforeEach(() => {
+    authIsSimpleMode.value = true
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+  })
+
+  it.each([
+    [undefined, 'false'],
+    [false, 'false'],
+    [true, 'true'],
+    ['true', 'false']
+  ])('hydrates the upstream-reset toggle from %s as %s', (storedValue, expected) => {
+    const account = buildOpenAIOAuthParentAccount()
+    account.extra = {
+      auto_reset_api_keys_on_upstream_reset: storedValue,
+      auto_reset_credit_enabled: true
+    }
+    const wrapper = mountModal(account)
+    const toggle = wrapper.get(toggleSelector)
+
+    expect(toggle.attributes('role')).toBe('switch')
+    expect(toggle.attributes('aria-checked')).toBe(expected)
+    expect(toggle.attributes('aria-label')).toBe('admin.accounts.autoResetApiKeysOnUpstreamReset.title')
+    expect(wrapper.text()).toContain('admin.accounts.autoResetApiKeysOnUpstreamReset.hint')
+    expect(wrapper.get<HTMLInputElement>('[data-testid="auto-reset-credit-5h-threshold"]').element.disabled).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('rehydrates the toggle when reopening or switching accounts', async () => {
+    const account = buildAccount()
+    const wrapper = mountModal(account)
+    await wrapper.get(toggleSelector).trigger('click')
+    expect(wrapper.get(toggleSelector).attributes('aria-checked')).toBe('true')
+
+    await wrapper.setProps({ show: false })
+    await wrapper.setProps({ show: true })
+    expect(wrapper.get(toggleSelector).attributes('aria-checked')).toBe('false')
+
+    await wrapper.setProps({ account: {
+      ...account,
+      id: 22,
+      extra: { auto_reset_api_keys_on_upstream_reset: true }
+    } })
+    expect(wrapper.get(toggleSelector).attributes('aria-checked')).toBe('true')
+    await wrapper.setProps({ account })
+    expect(wrapper.get(toggleSelector).attributes('aria-checked')).toBe('false')
+    wrapper.unmount()
+  })
+
+  it('saves an explicit false for an account with no upstream-reset setting', async () => {
+    const account = buildAccount()
+    updateAccountMock.mockResolvedValue(account)
+    const wrapper = mountModal(account)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.auto_reset_api_keys_on_upstream_reset).toBe(false)
+    expect(account.extra).toEqual({})
+    wrapper.unmount()
+  })
+
+  it.each([false, true])('saves upstream-reset %s independently of reset credits and preserves unrelated extra', async (enabled) => {
+    const account = buildOpenAIOAuthParentAccount()
+    account.extra = {
+      auto_reset_api_keys_on_upstream_reset: !enabled,
+      auto_reset_credit_enabled: true,
+      auto_reset_credit_5h_threshold: 0.75,
+      auto_reset_credit_7d_threshold: 0.92,
+      custom_metadata: { preserved: 'value' }
+    }
+    const originalExtra = structuredClone(account.extra)
+    updateAccountMock.mockResolvedValue(account)
+    const wrapper = mountModal(account)
+    await wrapper.get(toggleSelector).trigger('click')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    const extra = updateAccountMock.mock.calls[0]?.[1]?.extra
+    expect(extra).toMatchObject({ ...originalExtra, auto_reset_api_keys_on_upstream_reset: enabled })
+    expect(Object.keys(extra).filter(key => key.startsWith('auto_reset_api_keys'))).toEqual([
+      'auto_reset_api_keys_on_upstream_reset'
+    ])
+    expect(account.extra).toEqual(originalExtra)
+    wrapper.unmount()
+  })
+
+  it.each([true, false])('allows opting in without window data in simple mode=%s', async (simpleMode) => {
+    authIsSimpleMode.value = simpleMode
+    const account = buildOpenAIOAuthParentAccount()
+    updateAccountMock.mockResolvedValue(account)
+    const wrapper = mountModal(account)
+    const toggle = wrapper.get<HTMLButtonElement>(toggleSelector)
+    expect(toggle.attributes('aria-checked')).toBe('false')
+    expect(toggle.element.disabled).toBe(false)
+
+    await toggle.trigger('click')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).toMatchObject({
+      auto_reset_api_keys_on_upstream_reset: true,
+      auto_reset_credit_enabled: false
+    })
+    wrapper.unmount()
+  })
+
+  it.each([
+    ['Grok OAuth', buildGrokOAuthAccount],
+    ['Anthropic OAuth', () => ({ ...buildOpenAIOAuthParentAccount(), platform: 'anthropic' })],
+    ['Zhipu API key', () => ({
+      ...buildAccount(),
+      platform: 'zhipu',
+      credentials: { api_key: 'sk-test', account_mode: 'coding', api_protocol: 'anthropic' }
+    })]
+  ] as const)('saves the common upstream-reset setting for %s without window data', async (_name, build) => {
+    const account = build()
+    account.extra = { custom_metadata: { preserved: true } }
+    updateAccountMock.mockResolvedValue(account)
+    const wrapper = mountModal(account)
+    expect(wrapper.find('[data-testid="auto-reset-credit-settings"]').exists()).toBe(false)
+
+    await wrapper.get(toggleSelector).trigger('click')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).toMatchObject({
+      auto_reset_api_keys_on_upstream_reset: true,
+      custom_metadata: { preserved: true }
+    })
+    wrapper.unmount()
+  })
+
+  it.each([false, true])('keeps the upstream-reset %s selection and dialog open after a failed save', async (enabled) => {
+    const account = buildAccount()
+    account.extra = { auto_reset_api_keys_on_upstream_reset: !enabled }
+    updateAccountMock.mockRejectedValueOnce(new Error('Save failed'))
+    const wrapper = mountModal(account)
+    await wrapper.get(toggleSelector).trigger('click')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(wrapper.find('form#edit-account-form').exists()).toBe(true)
+    expect(wrapper.get(toggleSelector).attributes('aria-checked')).toBe(String(enabled))
+    expect(wrapper.get<HTMLButtonElement>('[data-tour="account-form-submit"]').element.disabled).toBe(false)
+    expect(wrapper.emitted('close')).toBeUndefined()
+    expect(wrapper.emitted('updated')).toBeUndefined()
+    expect(account.extra.auto_reset_api_keys_on_upstream_reset).toBe(!enabled)
+
+    updateAccountMock.mockResolvedValue(account)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(updateAccountMock).toHaveBeenCalledTimes(2)
+    expect(updateAccountMock.mock.calls[1]?.[1]?.extra?.auto_reset_api_keys_on_upstream_reset).toBe(enabled)
+    expect(wrapper.emitted('updated')).toHaveLength(1)
+    expect(wrapper.emitted('close')).toHaveLength(1)
+    wrapper.unmount()
   })
 })
 

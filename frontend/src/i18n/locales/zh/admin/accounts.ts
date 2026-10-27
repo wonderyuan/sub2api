@@ -1053,6 +1053,11 @@ export default {
       },
       autoPauseOnExpired: '过期自动暂停调度',
       autoPauseOnExpiredDesc: '启用后，账号过期将自动暂停调度',
+      autoResetApiKeysOnUpstreamReset: {
+        title: '随上游重置密钥 7 天用量',
+        description: '检测到上游 7 天窗口重置后，自动清零此账号所属分组内 API Key 的 7 天已用额度，并对齐重置时间。',
+        hint: '默认关闭。仅使用真实上游周窗口，不使用本地周配额；暂无窗口数据时可先开启等待。首次开启只建立基线，不立即清零。不修改额度上限、累计总额度、其他窗口或有效期；同组有多个开启账号时跳过，避免重复重置。'
+      },
 	  autoPause5hThreshold: '5h 用量阈值(%)',
 	  autoPause7dThreshold: '7d 用量阈值(%)',
 	  autoPauseThresholdHint: '留空或填 0 表示使用全局默认阈值（在运维设置中配置）；填具体值则覆盖全局默认。达到阈值后仅在调度时跳过账号，不修改 schedulable。',

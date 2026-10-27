@@ -1514,6 +1514,42 @@
         </div>
       </div>
 
+      <div class="space-y-2 border-t border-gray-200 pt-4 dark:border-dark-600">
+        <div class="flex items-center justify-between gap-4">
+          <label for="auto-reset-api-keys-on-upstream-reset" class="input-label mb-0">
+            {{ t('admin.accounts.autoResetApiKeysOnUpstreamReset.title') }}
+          </label>
+          <button
+            id="auto-reset-api-keys-on-upstream-reset"
+            type="button"
+            role="switch"
+            :aria-checked="autoResetApiKeysOnUpstreamReset"
+            :aria-label="t('admin.accounts.autoResetApiKeysOnUpstreamReset.title')"
+            aria-describedby="auto-reset-api-keys-description auto-reset-api-keys-hint"
+            :disabled="submitting"
+            data-testid="auto-reset-api-keys-on-upstream-reset"
+            @click="autoResetApiKeysOnUpstreamReset = !autoResetApiKeysOnUpstreamReset"
+            :class="[
+              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+              autoResetApiKeysOnUpstreamReset ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+            ]"
+          >
+            <span
+              :class="[
+                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                autoResetApiKeysOnUpstreamReset ? 'translate-x-5' : 'translate-x-0'
+              ]"
+            />
+          </button>
+        </div>
+        <p id="auto-reset-api-keys-description" class="text-xs text-gray-500 dark:text-gray-400">
+          {{ t('admin.accounts.autoResetApiKeysOnUpstreamReset.description') }}
+        </p>
+        <p id="auto-reset-api-keys-hint" class="input-hint">
+          {{ t('admin.accounts.autoResetApiKeysOnUpstreamReset.hint') }}
+        </p>
+      </div>
+
       <!-- Temp Unschedulable Rules -->
       <div class="border-t border-gray-200 pt-4 dark:border-dark-600 space-y-4">
         <div class="mb-3 flex items-center justify-between">
@@ -3847,6 +3883,7 @@ const loadGrokMediaEligibility = async (accountID: number): Promise<GrokMediaEli
 
 const interceptWarmupRequests = ref(false)
 const autoPauseOnExpired = ref(false)
+const autoResetApiKeysOnUpstreamReset = ref(false)
 const autoPause5hThreshold = ref<number | null>(null)
 const autoPause7dThreshold = ref<number | null>(null)
 const autoPause5hDisabled = ref(false)
@@ -4424,6 +4461,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   requestBodyNormalLimitMB.value = bytesToMB(extra?.request_body_normal_limit_bytes, 3)
   requestBodyHeavyLimitMB.value = bytesToMB(extra?.request_body_heavy_limit_bytes, 20)
   requestBodyRecoveryLimitMB.value = bytesToMB(extra?.request_body_recovery_limit_bytes, 32)
+  autoResetApiKeysOnUpstreamReset.value = extra?.auto_reset_api_keys_on_upstream_reset === true
   autoResetCreditEnabled.value = extra?.auto_reset_credit_enabled === true
   autoResetCredit5hThreshold.value =
     typeof extra?.auto_reset_credit_5h_threshold === 'number' ? extra.auto_reset_credit_5h_threshold * 100 : 100
@@ -6204,6 +6242,8 @@ const handleSubmit = async () => {
         delete newExtra.request_body_heavy_limit_bytes
         delete newExtra.request_body_recovery_limit_bytes
       }
+
+      newExtra.auto_reset_api_keys_on_upstream_reset = autoResetApiKeysOnUpstreamReset.value
 
       // 上游ID头名只在改动时写回 extra，避免用弹窗打开时的快照覆盖运行态键。
       const nextUpstreamRequestIdHeader = upstreamRequestIdHeader.value.trim()

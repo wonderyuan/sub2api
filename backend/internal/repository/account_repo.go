@@ -536,6 +536,15 @@ func (r *accountRepository) updateLockedAccount(
 	if err != nil {
 		return nil, err
 	}
+	// Read server-owned weekly observations under the row lock already held by
+	// lockAndMergeAccountProbeExtra. A stale admin DTO must not overwrite a newer
+	// observer or manufacture an upstream reset.
+	if enabled, _ := extra[service.AutoResetAPIKeysOnUpstreamResetExtraKey].(bool); enabled {
+		extra, err = preserveUpstreamAPIKeyResetSnapshots(ctx, client, account.ID, extra)
+		if err != nil {
+			return nil, err
+		}
+	}
 	account.Extra = extra
 
 	schedulable := account.Schedulable

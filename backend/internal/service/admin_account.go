@@ -163,6 +163,7 @@ func duplicateAccountExtra(value map[string]any) (map[string]any, error) {
 	for key := range duplicateAccountDiscardedExtraKeys {
 		delete(cloned, key)
 	}
+	stripUpstreamAPIKeyResetSnapshots(cloned)
 	return cloned, nil
 }
 
@@ -595,6 +596,11 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 	if err != nil {
 		return nil, err
 	}
+	accountExtra, err = normalizeUpstreamAPIKeyResetExtra(accountExtra)
+	if err != nil {
+		return nil, err
+	}
+	stripUpstreamAPIKeyResetSnapshots(accountExtra)
 	if err := ValidateUpstreamRequestIDHeaderExtra(accountExtra); err != nil {
 		return nil, err
 	}
@@ -709,6 +715,16 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		normalizedExtra, err = normalizeOpenAIAutoResetCreditExtra(account.Platform, effectiveType, account.IsShadow(), normalizedExtra)
 		if err != nil {
 			return nil, err
+		}
+		normalizedExtra, err = normalizeUpstreamAPIKeyResetExtra(normalizedExtra)
+		if err != nil {
+			return nil, err
+		}
+		stripUpstreamAPIKeyResetSnapshots(normalizedExtra)
+		for key, value := range account.Extra {
+			if IsUpstreamAPIKeyResetSnapshotKey(key) {
+				normalizedExtra[key] = value
+			}
 		}
 		if err := ValidateUpstreamRequestIDHeaderExtra(normalizedExtra); err != nil {
 			return nil, err
@@ -1020,7 +1036,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	}
 
 	// 绑定分组
-	if input.GroupIDs != nil {
+	if input.GroupIDs != nil && !upstreamAPIKeyResetGroupsUnchanged(account, *input.GroupIDs) {
 		if err := s.accountRepo.BindGroups(ctx, account.ID, *input.GroupIDs); err != nil {
 			return nil, err
 		}
@@ -1039,6 +1055,8 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, updates map[string]any) error {
 	updates = sanitizedCodexFingerprintExtraUpdates(updates)
 	updates = stripOpenAIAutoResetCreditManagedExtra(updates, true)
+	stripUpstreamAPIKeyResetSnapshots(updates)
+	delete(updates, AutoResetAPIKeysOnUpstreamResetExtraKey)
 	delete(updates, UpstreamBillingProbeEnabledExtraKey)
 	delete(updates, UpstreamBillingRateSyncEnabledExtraKey)
 	delete(updates, UpstreamBillingProbeExtraKey)
@@ -1068,6 +1086,8 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	// Managed probe/session state may only enter through dedicated typed endpoints.
 	input.Extra = sanitizedCodexFingerprintExtraUpdates(input.Extra)
 	input.Extra = stripOpenAIAutoResetCreditManagedExtra(input.Extra, true)
+	stripUpstreamAPIKeyResetSnapshots(input.Extra)
+	delete(input.Extra, AutoResetAPIKeysOnUpstreamResetExtraKey)
 	delete(input.Extra, UpstreamBillingProbeEnabledExtraKey)
 	delete(input.Extra, UpstreamBillingRateSyncEnabledExtraKey)
 	delete(input.Extra, UpstreamBillingProbeExtraKey)

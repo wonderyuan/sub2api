@@ -1268,6 +1268,8 @@ export interface Account {
       fetched_at: number
     }
     codex_referral_snapshot?: import('./openaiReferrals').OpenAIReferralEligibility | null
+    /** Opt-in only; upstream-reset tracking state is stored separately by the backend. */
+    auto_reset_api_keys_on_upstream_reset?: boolean
     auto_reset_credit_enabled?: boolean
     auto_reset_credit_5h_threshold?: number
     auto_reset_credit_7d_threshold?: number

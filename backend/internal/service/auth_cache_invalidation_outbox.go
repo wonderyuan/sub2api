@@ -24,6 +24,7 @@ const (
 type AuthCacheInvalidationEvent struct {
 	ID        int64
 	CacheKey  string
+	APIKeyID  int64 // optional: also invalidate the billing rate-limit cache
 	Attempts  int
 	Stage     int
 	CreatedAt time.Time
@@ -86,6 +87,7 @@ type AuthCacheInvalidationWorker struct {
 	repo      AuthCacheInvalidationOutboxRepository
 	cache     APIKeyCache
 	local     *APIKeyService
+	billing   RateLimitCacheInvalidator
 	workerID  string
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -182,6 +184,13 @@ func (w *AuthCacheInvalidationWorker) processEvent(parent context.Context, event
 	err := w.cache.DeleteAuthCache(ctx, event.CacheKey)
 	if err == nil {
 		err = w.cache.PublishAuthCacheInvalidation(ctx, event.CacheKey)
+	}
+	if err == nil && event.APIKeyID > 0 {
+		if w.billing == nil {
+			err = fmt.Errorf("billing cache invalidator unavailable")
+		} else {
+			err = w.billing.InvalidateAPIKeyRateLimit(ctx, event.APIKeyID)
+		}
 	}
 	cancel()
 	if err != nil {
@@ -286,8 +295,9 @@ func (w *AuthCacheInvalidationWorker) Health(ctx context.Context) AuthCacheInval
 	return health
 }
 
-func ProvideAuthCacheInvalidationWorker(repo AuthCacheInvalidationOutboxRepository, cache APIKeyCache, apiKeyService *APIKeyService) *AuthCacheInvalidationWorker {
+func ProvideAuthCacheInvalidationWorker(repo AuthCacheInvalidationOutboxRepository, cache APIKeyCache, apiKeyService *APIKeyService, billing *BillingCacheService) *AuthCacheInvalidationWorker {
 	worker := NewAuthCacheInvalidationWorker(repo, cache, apiKeyService)
+	worker.billing = billing
 	worker.Start()
 	return worker
 }

@@ -44,7 +44,7 @@ func (r *authCacheInvalidationOutboxRepository) Claim(ctx context.Context, worke
 		SET claimed_at = NOW(), claimed_by = $1
 		FROM candidates AS c
 		WHERE o.id = c.id
-		RETURNING o.id, o.cache_key, o.attempts, o.delivery_stage, o.created_at
+		RETURNING o.id, o.cache_key, o.attempts, o.delivery_stage, o.created_at, COALESCE(o.api_key_id, 0)
 	`, workerID, limit, leaseSeconds)
 	if err != nil {
 		return nil, err
@@ -54,7 +54,7 @@ func (r *authCacheInvalidationOutboxRepository) Claim(ctx context.Context, worke
 	events := make([]service.AuthCacheInvalidationEvent, 0, limit)
 	for rows.Next() {
 		var event service.AuthCacheInvalidationEvent
-		if err := rows.Scan(&event.ID, &event.CacheKey, &event.Attempts, &event.Stage, &event.CreatedAt); err != nil {
+		if err := rows.Scan(&event.ID, &event.CacheKey, &event.Attempts, &event.Stage, &event.CreatedAt, &event.APIKeyID); err != nil {
 			return nil, err
 		}
 		event.CacheKey = strings.TrimSpace(event.CacheKey)

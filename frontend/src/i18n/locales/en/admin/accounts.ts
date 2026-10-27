@@ -951,6 +951,11 @@ export default {
       },
       autoPauseOnExpired: 'Auto Pause On Expired',
       autoPauseOnExpiredDesc: 'When enabled, the account will auto pause scheduling after it expires',
+      autoResetApiKeysOnUpstreamReset: {
+        title: 'Reset API key 7-day usage with upstream',
+        description: 'When an upstream 7-day window reset is detected, automatically clear 7-day usage for API keys in this account’s groups and align their reset times.',
+        hint: 'Off by default. Requires a real upstream weekly window, not a local weekly quota; you can enable it before window data is available. First enable only establishes a baseline without clearing usage. Quota limits, cumulative total usage, other windows, and expiration stay unchanged. Groups with multiple enabled accounts are skipped to prevent duplicate resets.'
+      },
 	  autoPause5hThreshold: '5h Usage Threshold (%)',
 	  autoPause7dThreshold: '7d Usage Threshold (%)',
 	  autoPauseThresholdHint: 'Leave empty or set 0 to use the global default threshold (configured in Ops settings); set a value to override the global default. Reaching the threshold only skips the account during scheduling and does not modify schedulable.',

@@ -198,6 +198,12 @@ func ProvideOpenAIQuotaService(
 	return service
 }
 
+func ProvideUpstreamAPIKeyResetService(repo UpstreamAPIKeyResetRepository) *UpstreamAPIKeyResetService {
+	svc := NewUpstreamAPIKeyResetService(repo)
+	svc.Start()
+	return svc
+}
+
 // ProvideOpenAIQuotaAutoResetService 启动账号级自动用卡队列与补偿扫描。
 func ProvideOpenAIQuotaAutoResetService(
 	accountRepo AccountRepository,
@@ -918,6 +924,7 @@ var ProviderSet = wire.NewSet(
 	ProvideOpenAITokenProvider,
 	ProvideOpenAIQuotaService,
 	ProvideOpenAIQuotaAutoResetService,
+	ProvideUpstreamAPIKeyResetService,
 	ProvideGrokQuotaService,
 	ProvideCNProviderQuotaService,
 	ProvideCNProviderBalanceService,

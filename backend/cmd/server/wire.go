@@ -130,6 +130,7 @@ func provideCleanup(
 	opencodeGoUsage *service.OpenCodeGoUsageService,
 	auditLog *service.AuditLogService,
 	openAIAutoReset *service.OpenAIQuotaAutoResetService,
+	upstreamAPIKeyReset *service.UpstreamAPIKeyResetService,
 	promptAudit *securityaudit.PromptService,
 	pluginManager *service.PluginManager,
 ) func() {
@@ -153,6 +154,12 @@ func provideCleanup(
 			{"PluginManager", func() error {
 				if pluginManager != nil {
 					pluginManager.Stop()
+				}
+				return nil
+			}},
+			{"UpstreamAPIKeyResetService", func() error {
+				if upstreamAPIKeyReset != nil {
+					upstreamAPIKeyReset.Stop()
 				}
 				return nil
 			}},
