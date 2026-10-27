@@ -93,6 +93,7 @@ const sourceGroup = {
   allow_image_generation: false,
   allow_batch_image_generation: false,
   image_rate_independent: false,
+  image_count_billing: false,
   image_rate_multiplier: 1,
   batch_image_discount_multiplier: 0.5,
   batch_image_hold_multiplier: 0.6,
